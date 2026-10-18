@@ -49,12 +49,12 @@ HEARING_FORUM_TAG_ID = ""
 # 定例の回数：ツールで最初に開いた定例を何回目とするか（Notionの「政策立案部門定例第◯回」に合わせる）
 TEIREI_FIRST_NUMBER = "57"
 # 定例の議事録を自動で入れるNotionの「議事録」データベース（部門のページの中）と、その回から（それより前の回は何もしない）
-NOTION_TEIREI_DB = "23c2f6877cc181b9814bcfe73a3127b6"
+NOTION_TEIREI_DB = ""
 NOTION_TEIREI_FROM = "57"
 # 議事録の「部門」欄に入れる、政策立案部門のNotionページ
-NOTION_DEPT_PAGE = "23c2f6877cc180ccaa62e92a0e75d464"
+NOTION_DEPT_PAGE = ""
 # その他のMTGの議事録を入れる、Notionの「部門」の中の「その他」のページ（中の「プロジェクト」欄に、プロジェクトごとのページを作る）
-NOTION_OTHER_PAGE = "2792f6877cc18037ab6acd423a70050a"
+NOTION_OTHER_PAGE = ""
 
 # シークレット（`npx wrangler secret put <NAME>` で設定。コードやログには出さない）:
 #   DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET / SESSION_SECRET
