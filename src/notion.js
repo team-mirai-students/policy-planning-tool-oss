@@ -252,9 +252,12 @@ export async function createProjectPage(env, { name, notionUserIds, sampleUrl })
 
 // ---------- 定例の議事録 → 部門の「議事録」データベース ----------
 // データベースの欄（タイトル・日付・種類・部門へのリンク）は名前が変わってもいいように、欄の種類で探す
-export async function createTeireiPage(env, { title, date, children }) {
+// author：最初に「保存する」を押した人のNotionアカウント（人の欄に入れる）。アイコンは、手で作ったほかの回と同じものにする
+export async function createTeireiPage(env, { title, date, children, author = "" }) {
   const db = await call(env, `/databases/${env.NOTION_TEIREI_DB}`, "GET");
   const props = {};
+  const who = authorProp(db);
+  if (who && author) props[who] = { people: [{ object: "user", id: author }] };
   for (const [name, p] of Object.entries(db.properties || {})) {
     if (p.type === "title") props[name] = { title: rich(title) };
     else if (p.type === "date" && !props.__date) { props[name] = { date: { start: date } }; props.__date = true; }
@@ -262,9 +265,49 @@ export async function createTeireiPage(env, { title, date, children }) {
     else if (p.type === "relation" && env.NOTION_DEPT_PAGE) props[name] = { relation: [{ id: env.NOTION_DEPT_PAGE }] };
   }
   delete props.__date;
-  const page = await call(env, "/pages", "POST", { parent: { database_id: env.NOTION_TEIREI_DB }, properties: props, children: children.slice(0, 100) });
+  const icon = await teireiIcon(env);
+  const page = await call(env, "/pages", "POST", { parent: { database_id: env.NOTION_TEIREI_DB }, properties: props, ...(icon ? { icon } : {}), children: children.slice(0, 100) });
   await appendBlocks(env, page.id, children.slice(100));
   return page.url;
+}
+
+// 議事録の「人」の欄（作成者・記録者など）。名前で見つからなければ、人の欄が1つだけのときはそれ
+function authorProp(db) {
+  const people = Object.entries(db.properties || {}).filter(([, p]) => p.type === "people");
+  return (people.find(([n]) => /作成|記録|書記|担当/.test(n)) || (people.length === 1 ? people[0] : null))?.[0] || null;
+}
+
+// 手で作ったほかの回のアイコン（同じデータベースの新しいページから、アイコンが付いているもの）
+async function teireiIcon(env) {
+  const r = await call(env, `/databases/${env.NOTION_TEIREI_DB}/query`, "POST", { page_size: 20, sorts: [{ timestamp: "created_time", direction: "descending" }] });
+  const icon = r.results?.map((p) => p.icon).find((i) => i && ["emoji", "external", "custom_emoji"].includes(i.type));
+  if (!icon) return null;
+  return icon.type === "emoji" ? { type: "emoji", emoji: icon.emoji }
+    : icon.type === "external" ? { type: "external", external: { url: icon.external.url } }
+    : { type: "custom_emoji", custom_emoji: { id: icon.custom_emoji.id } };
+}
+
+// ツールで作った定例の議事録ページに、アイコンと作成者が入っていなければ入れる（前に作ったページも、次に保存したときに直る）
+export async function fillTeireiPage(env, pageUrl, author = "") {
+  const id = notionPageId(pageUrl);
+  if (!id) return;
+  const page = await call(env, `/pages/${id}`, "GET");
+  const patch = {};
+  if (!page.icon) {
+    const icon = await teireiIcon(env);
+    if (icon) patch.icon = icon;
+  }
+  const db = await call(env, `/databases/${env.NOTION_TEIREI_DB}`, "GET");
+  const who = authorProp(db);
+  if (who && author && !(page.properties?.[who]?.people || []).length) patch.properties = { [who]: { people: [{ object: "user", id: author }] } };
+  if (Object.keys(patch).length) await call(env, `/pages/${id}`, "PATCH", patch);
+}
+
+// 管理者の確認用：定例の議事録データベースの「人」の欄（自動で入る「作成者」の欄は、ツールからは変えられない）
+export async function teireiPeopleColumns(env) {
+  const db = await call(env, `/databases/${env.NOTION_TEIREI_DB}`, "GET");
+  return { people: Object.entries(db.properties || {}).filter(([, p]) => p.type === "people").map(([n]) => n),
+    createdBy: Object.entries(db.properties || {}).filter(([, p]) => p.type === "created_by").map(([n]) => n), author: authorProp(db) };
 }
 
 // 同じ題名のページがもうあるか（手で作った回を二重に作らない）

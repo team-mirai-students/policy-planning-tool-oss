@@ -4,7 +4,7 @@ import { addDays } from "../project-types.js";
 import { regularOccurrences } from "../schedule.js";
 import { loadProject, requireAdmin, requireEditor } from "./common.js";
 import { cleanLayout } from "../teirei-layout.js";
-import { notionConfigured, createTeireiPage, findTeireiPage, replaceNotionPage, replaceToolSection, teireiBlocks } from "../notion.js";
+import { notionConfigured, fillTeireiPage, createTeireiPage, findTeireiPage, replaceNotionPage, replaceToolSection, teireiBlocks } from "../notion.js";
 
 export const routes = [
   ["GET", "/api/dept-meetings", listDeptMeetings],
@@ -147,7 +147,8 @@ async function getDeptMeeting({ env, user, params }) {
 // 1回目：同じ題名のページがなければ作る。2回目から：作ったページを書き直す
 // 同じ題名のページが手で作ってあれば（第57回など）、二重に作らずそのページを使う。手で書いた中身は残し、最後に足す「ツールの議事録」の部分だけを書き直す
 // NOTION_TEIREI_FROM より前の回は何もしない
-export async function syncTeireiNotion(env, id) {
+// userId：「保存する」を押した人（はじめてページを作るとき、Notionの作成者の欄に入れる）
+export async function syncTeireiNotion(env, id, userId = null) {
   const meeting = await env.DB.prepare(`SELECT d.*, ${NUMBER_SQL} + ? AS number FROM dept_meetings d WHERE d.id = ?`).bind(firstNumber(env), id).first();
   if (!meeting) return;
   // 決めた回より前の定例は入れない（まとめて入れるときに、もう数えないよう印を付ける）
@@ -163,28 +164,36 @@ export async function syncTeireiNotion(env, id) {
   ).bind(meeting.id).all();
   const children = teireiBlocks({ ...meeting, reports, missing, appUrl: env.APP_URL ? `${env.APP_URL}/#/teirei/${meeting.id}` : "" });
   if (meeting.notion_url === "skip") return;
-  await putTeireiNotion(env, { number: meeting.number, date: meeting.held_on, children, current: meeting.notion_url,
+  await putTeireiNotion(env, { number: meeting.number, date: meeting.held_on, children, current: meeting.notion_url, author: await notionUser(env, userId),
     save: (url) => env.DB.prepare("UPDATE dept_meetings SET notion_url = ? WHERE id = ? AND (notion_url IS NULL OR notion_url = '')").bind(url, meeting.id).run() });
 }
 
 // Notionの定例の議事録ページを書く：作ってあれば書き直す。同じ題名のページが手で作ってあれば、そのページの最後に足す。なければ作る
-async function putTeireiNotion(env, { number, date, children, current, save }) {
+async function putTeireiNotion(env, { number, date, children, current, save, author = "" }) {
   const title = `${String(number).padStart(3, "0")}_政策立案部門定例第${number}回`;
   if (current) {
     if (current.startsWith("merge:")) return replaceToolSection(env, current.slice(6), children);
-    return replaceNotionPage(env, current, title, children);
+    await replaceNotionPage(env, current, title, children);
+    return fillTeireiPage(env, current, author);
   }
   const existing = await findTeireiPage(env, title);
   if (existing) {
     await save(`merge:${existing}`);
     return replaceToolSection(env, existing, children);
   }
-  await save(await createTeireiPage(env, { title, date, children }));
+  await save(await createTeireiPage(env, { title, date, children, author }));
+}
+
+// ツールのユーザーに対応づけたNotionアカウント（管理者メニュー「メンバーのアカウント」）
+async function notionUser(env, userId) {
+  if (!userId) return "";
+  const u = await env.DB.prepare("SELECT notion_user_id FROM users WHERE id = ?").bind(userId).first();
+  return u?.notion_user_id || "";
 }
 
 // まだ始めていない定例（day）に向けて書いた事務連絡・イベントを、Notionの定例の議事録にも入れる（事務連絡を「保存する」とき）
 // 第◯回は、その日より前の定例（作ってある定例と、予定でまだ作っていない定例）の数から数える。定例を始めると、このページを引き継ぐ
-export async function syncTeireiDayNotion(env, day) {
+export async function syncTeireiDayNotion(env, day, userId = null) {
   const row = await env.DB.prepare("SELECT * FROM dept_notice_days WHERE held_on = ?").bind(day).first();
   if (!row) return;
   const [{ n }, slots] = await Promise.all([
@@ -200,7 +209,7 @@ export async function syncTeireiDayNotion(env, day) {
     `SELECT name FROM projects p WHERE status = 'active' AND NOT EXISTS (SELECT 1 FROM dept_reports r WHERE r.project_id = p.id AND r.dept_meeting_id IS NULL AND r.held_on = ?) ORDER BY created_at`
   ).bind(day).all();
   const children = teireiBlocks({ ...row, memo: "", reports, missing, appUrl: "" });
-  await putTeireiNotion(env, { number, date: day, children, current: row.notion_url,
+  await putTeireiNotion(env, { number, date: day, children, current: row.notion_url, author: await notionUser(env, userId),
     save: (url) => env.DB.prepare("UPDATE dept_notice_days SET notion_url = ? WHERE held_on = ? AND (notion_url IS NULL OR notion_url = '')").bind(url, day).run() });
 }
 const syncLater = (env, ctx, job) => ctx?.waitUntil(job().catch((err) => console.error("teirei notion sync failed", err?.status, err?.code || err?.message)));
@@ -228,7 +237,7 @@ async function updateDeptMeeting({ request, env, user, params, ctx }) {
   ).bind(notice, memo, news, exchange, layout, event, endedAt, user.id, now, cur.id, version).run();
   assertUpdated(res, "定例の議事録");
   if (body.reopen && cur.ended_at) await env.DB.batch(collectStatements(env, cur.id, cur.held_on, now));
-  if (!body.reopen && !body.auto && teireiNotionOn(env)) ctx?.waitUntil(syncTeireiNotion(env, cur.id).catch((err) => console.error("teirei notion sync failed", err?.status, err?.code || err?.message)));
+  if (!body.reopen && !body.auto && teireiNotionOn(env)) ctx?.waitUntil(syncTeireiNotion(env, cur.id, user.id).catch((err) => console.error("teirei notion sync failed", err?.status, err?.code || err?.message)));
   return { ok: true, version: version + 1 };
 }
 
@@ -320,7 +329,7 @@ async function saveReport({ request, env, user, params, ctx }) {
          WHERE project_id = ? AND COALESCE(dept_meeting_id, 0) = ? AND held_on = ? AND version = ?`
       ).bind(...values, project.id, t.meetingId, t.heldOn, version).run();
   assertUpdated(res, "進捗共有");
-  if (body.sync && t.meeting?.ended_at && teireiNotionOn(env)) ctx?.waitUntil(syncTeireiNotion(env, t.meeting.id).catch((err) => console.error("teirei notion sync failed", err?.status, err?.code || err?.message)));
+  if (body.sync && t.meeting?.ended_at && teireiNotionOn(env)) ctx?.waitUntil(syncTeireiNotion(env, t.meeting.id, user.id).catch((err) => console.error("teirei notion sync failed", err?.status, err?.code || err?.message)));
   return { ok: true, version: version + 1 };
 }
 
@@ -363,7 +372,7 @@ async function saveEvent({ request, env, user, url, ctx }) {
         .bind(text, user.id, now, day, version).run();
   assertUpdated(res, EVENT_LABELS[field]);
   // 「保存する」「MTGを終える」のとき：作ってある定例なら、Notionの定例の議事録も書き直す
-  if (body.sync && teireiNotionOn(env)) syncLater(env, ctx, () => (meeting ? syncTeireiNotion(env, meeting.id) : syncTeireiDayNotion(env, day)));
+  if (body.sync && teireiNotionOn(env)) syncLater(env, ctx, () => (meeting ? syncTeireiNotion(env, meeting.id, user.id) : syncTeireiDayNotion(env, day, user.id)));
   return { ok: true, version: meeting || version > 0 ? version + 1 : 1 };
 }
 
@@ -420,8 +429,8 @@ async function saveNotice({ request, env, user, ctx }) {
         .bind(notice, news, exchange, layout, user.id, now, version).run();
   assertUpdated(res, "事務連絡");
   if (body.sync && teireiNotionOn(env)) {
-    if (t.target === "meeting") syncLater(env, ctx, () => syncTeireiNotion(env, t.meeting.id));
-    else if (t.target === "day") syncLater(env, ctx, () => syncTeireiDayNotion(env, day));
+    if (t.target === "meeting") syncLater(env, ctx, () => syncTeireiNotion(env, t.meeting.id, user.id));
+    else if (t.target === "day") syncLater(env, ctx, () => syncTeireiDayNotion(env, day, user.id));
   }
   return { ok: true, version: version + 1 };
 }

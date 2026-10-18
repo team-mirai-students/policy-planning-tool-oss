@@ -2,7 +2,7 @@
 // 議事録は、Notionの「その他」ページの「プロジェクト」欄に作ったプロジェクトのページの中へ、1回ずつページとして入る
 import { HttpError, readJson, required, int, longText, reqDateTime, assertUpdated } from "../util.js";
 import { requireAdmin } from "./common.js";
-import { notionConfigured, notionPageId, findOtherParent, createGroupPage, createNotionPage, replaceNotionPage, noteBlocks } from "../notion.js";
+import { notionConfigured, notionPageId, teireiPeopleColumns, findOtherParent, createGroupPage, createNotionPage, replaceNotionPage, noteBlocks } from "../notion.js";
 
 export const routes = [
   ["GET", "/api/other-groups", listGroups],
@@ -130,6 +130,16 @@ async function checkNotion({ env, user }) {
       results.push({ label: c.label, ok: false, message: err?.status === 404 || err?.code === "object_not_found"
         ? "ページが見つかりません。Notionでそのページの「…」→「接続」に、インテグレーション（アクションボード）を追加してください"
         : `Notionにつながりませんでした（${err?.status || ""} ${err?.code || err?.message || ""}）` });
+    }
+  }
+  if (env.NOTION_TEIREI_DB) {
+    try {
+      const c = await teireiPeopleColumns(env);
+      results.push({ label: "定例の議事録", ok: Boolean(c.author), message: c.author
+        ? `はじめに「保存する」を押した人を、人の欄「${c.author}」に入れます`
+        : `作成者を入れられる「人」の欄がありません${c.createdBy.length ? `（「${c.createdBy.join("・")}」は Notion が自動で入れる欄なので、ツールからは変えられません）` : ""}${c.people.length ? `。人の欄：${c.people.join("・")}` : ""}` });
+    } catch (err) {
+      results.push({ label: "定例の議事録", ok: false, message: `データベースを読めませんでした（${err?.status || ""} ${err?.code || err?.message || ""}）` });
     }
   }
   return { ok: results.every((r) => r.ok), results };

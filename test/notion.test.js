@@ -75,3 +75,25 @@ test("その他のページの「プロジェクト」欄（段組みの中の�
     globalThis.fetch = real;
   }
 });
+
+test("定例の議事録ページは、ほかの回と同じアイコンにし、最初に保存した人を人の欄に入れる", async () => {
+  const { createTeireiPage } = await import("../src/notion.js");
+  let posted;
+  const reply = (body) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, opt = {}) => {
+    const path = String(url).replace("https://api.notion.com/v1", "");
+    if (path === "/databases/db") return reply({ properties: { "名前": { type: "title" }, "日付": { type: "date" }, "作成者": { type: "people" }, "参加者": { type: "people" } } });
+    if (path === "/databases/db/query") return reply({ results: [{ icon: null }, { icon: { type: "external", external: { url: "https://www.notion.so/icons/document_pink.svg" } } }] });
+    if (path === "/pages") { posted = JSON.parse(opt.body); return reply({ id: "x", url: "https://www.notion.so/x" }); }
+    return reply({});
+  };
+  try {
+    await createTeireiPage({ NOTION_TOKEN: "t", NOTION_TEIREI_DB: "db" }, { title: "058_政策立案部門定例第58回", date: "2026-10-19", children: [], author: "notion-user-1" });
+    assert.equal(posted.icon.external.url, "https://www.notion.so/icons/document_pink.svg");
+    assert.deepEqual(posted.properties["作成者"], { people: [{ object: "user", id: "notion-user-1" }] });
+    assert.equal(posted.properties["参加者"], undefined);
+  } finally {
+    globalThis.fetch = real;
+  }
+});

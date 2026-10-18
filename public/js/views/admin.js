@@ -112,7 +112,7 @@ export async function renderAdmin(el) {
           ${ok(data.settings.forum, "渉外フォーラム（ヒアリングのスレッド作成）")}
           ${ok(data.settings.notion, "Notion連携（MTG・定例の議事録をNotionに入れる）")}
         </ul>
-        <p><button type="button" class="small" id="notion-check">${ico("search")} Notionの「その他」ページにつながるか確かめる</button></p>
+        <p><button type="button" class="small" id="notion-check">${ico("search")} Notionにつながるか確かめる（その他のページ・定例の議事録）</button></p>
         <div id="notion-check-result"></div>
         <div id="notion-backfill"></div>
         ${data.archived.length ? `<h3 class="small">アーカイブしたPJ</h3><ul class="settings-list">${data.archived.map((p) =>
