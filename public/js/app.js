@@ -10,6 +10,7 @@ import { renderCheck } from "./views/check.js";
 import { renderNotices, renderMyTasks } from "./views/notices.js";
 import { renderProfile } from "./views/profile.js";
 import { renderStart } from "./views/start.js";
+import { renderOtherList, renderOtherMeeting } from "./views/other.js";
 import { renderPresentList, renderPresent } from "./views/present.js";
 import { renderProjects, renderProjectForm } from "./views/projects.js";
 import { renderSchedule } from "./views/schedule.js";
@@ -57,6 +58,8 @@ const ROUTES = [
   [/^\/teirei\/(\d+)$/, "home", (m) => (el) => renderTeirei(el, Number(m[1]))],
   [/^\/report$/, "projects", () => renderReportList],
   [/^\/teirei-event$/, "home", () => renderTeireiEvent],
+  [/^\/other-meetings$/, "home", () => renderOtherList],
+  [/^\/other-meetings\/(\d+)$/, "home", (m) => (el) => renderOtherMeeting(el, Number(m[1]))],
   [/^\/report\/(\d+)$/, "projects", (m) => (el) => renderReport(el, Number(m[1]))],
   [/^\/sources$/, "home", () => (el) => renderSourcesView(el)],
   [/^\/hearings$/, "projects", () => renderHearings],

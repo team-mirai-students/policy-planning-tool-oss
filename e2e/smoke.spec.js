@@ -327,3 +327,30 @@ test("定例イベントのMTGと進捗は、どの定例に入れるか選べ�
   expect(merged.news).toContain(word);
   expect(errors).toEqual([]);
 });
+
+test("その他のMTG：プロジェクトを作って議事録を書き、次からは一覧から選べる", async ({ page }) => {
+  const errors = watchErrors(page);
+  await login(page);
+  const name = `その他テスト ${stamp}`;
+  const word = `その他メモ${stamp}`;
+  await page.goto("/#/start");
+  await page.getByRole("link", { name: /その他のMTG/ }).click();
+  await page.fill("#new-group [name=name]", name);
+  await page.getByRole("button", { name: "作ってMTGを始める" }).click();
+  await expect(page.locator(".timer")).toBeVisible();
+  await page.locator("#other-form .rich-editor").click();
+  await page.keyboard.type(word);
+  await page.getByRole("button", { name: "MTGを終える" }).click();
+  await confirm(page, "MTGを終える");
+  await expect(page.locator(".toast")).toContainText("MTGを終えました");
+  const id = page.url().match(/other-meetings\/(\d+)/)[1];
+  const { meeting } = await page.evaluate((i) => fetch(`/api/other-meetings/${i}`).then((r) => r.json()), id);
+  expect(meeting.body).toContain(word);
+  expect(meeting.ended_at).toBeTruthy();
+  // 次からは、作ったプロジェクトが一覧に出る
+  await page.goto("/#/start?kind=other");
+  await expect(page.locator(".pick-list")).toContainText(name);
+  await page.goto("/#/other-meetings");
+  await expect(page.locator(".list")).toContainText(name);
+  expect(errors).toEqual([]);
+});

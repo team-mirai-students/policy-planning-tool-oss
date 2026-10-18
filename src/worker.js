@@ -19,11 +19,12 @@ import { routes as schedulePollRoutes } from "./api/schedule-polls.js";
 import { routes as trashRoutes } from "./api/trash.js";
 import { routes as shareRoutes, handleShare } from "./share.js";
 import { routes as discordPostRoutes } from "./discord-post.js";
+import { routes as otherRoutes } from "./api/other.js";
 import { runDailyReminders } from "./cron.js";
 import { reportError } from "./monitor.js";
 
 // [メソッド, パス（:id は数字）, ハンドラ]。ハンドラは (ctx) => Response | data
-const ROUTES = [...overviewRoutes, ...projectRoutes, ...taskRoutes, ...meetingRoutes, ...seedRoutes, ...hearingRoutes, ...adminRoutes, ...researchRoutes, ...presentationRoutes, ...deptRoutes, ...searchRoutes, ...timelineRoutes, ...surveyRoutes, ...notionBackfillRoutes, ...schedulePollRoutes, ...trashRoutes, ...shareRoutes, ...discordPostRoutes].map(([method, path, handler]) => [
+const ROUTES = [...overviewRoutes, ...projectRoutes, ...taskRoutes, ...meetingRoutes, ...seedRoutes, ...hearingRoutes, ...adminRoutes, ...researchRoutes, ...presentationRoutes, ...deptRoutes, ...searchRoutes, ...timelineRoutes, ...surveyRoutes, ...notionBackfillRoutes, ...schedulePollRoutes, ...trashRoutes, ...shareRoutes, ...discordPostRoutes, ...otherRoutes].map(([method, path, handler]) => [
   method,
   new RegExp(`^${path.replace(/:(\w+)/g, "(?<$1>\\d+)")}$`),
   handler,

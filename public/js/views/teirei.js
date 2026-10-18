@@ -382,7 +382,8 @@ export async function renderTeireiNotice(el) {
   guardForm(noticeForm);
   bindLayout(el.querySelector("#secs"), layout, { onChange: () => noticeForm.dispatchEvent(new Event("input", { bubbles: true })) });
   const f = noticeForm;
-  const body = () => ({ notice: f.notice.value, news: f.news.value, exchange: f.exchange.value, layout: layoutValue(f, layout), version, target: d.target, day: d.target === "next" ? null : d.day });
+  let sync = false; // 「保存する」を押したときだけ、Notionの定例の議事録にも入れる
+  const body = () => ({ notice: f.notice.value, news: f.news.value, exchange: f.exchange.value, layout: layoutValue(f, layout), version, target: d.target, day: d.target === "next" ? null : d.day, sync });
   let base = { notice: d.notice, news: d.news, exchange: d.exchange };
   const saveNow = () => api("/api/dept-notice", { method: "PUT", body: body() })
     .catch(async (err) => {
@@ -406,7 +407,8 @@ export async function renderTeireiNotice(el) {
   noticeForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     if (auto.pending()) await auto.flush();
-    busy(e.submitter, saveNow).then(() => { markSaved(noticeForm); toast("保存しました"); }).catch(() => {});
+    busy(e.submitter, () => { sync = true; return saveNow().finally(() => { sync = false; }); })
+      .then(() => { markSaved(noticeForm); toast(d.target === "next" ? "保存しました" : "保存しました。Notionの定例の議事録にも入ります"); }).catch(() => {});
   });
 }
 

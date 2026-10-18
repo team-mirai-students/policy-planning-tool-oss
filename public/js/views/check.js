@@ -7,6 +7,7 @@ const ITEMS = [
   ["#/notices", "bell", "お知らせ", "担当になったタスク・MTGの追加や変更・確認待ちのヒアリングなど", null, "notices"],
   ["#/my-tasks", "check", "自分のタスク", "自分が担当のタスクを、すべてのPJからまとめて"],
   ["#/minutes-search", "search", "議事録を探す", "MTGの議事録・定例の議事録・発表の記録を言葉で探す"],
+  ["#/other-meetings", "talk", "その他のMTG", "PJ・定例以外のMTGの議事録"],
   ["#/sources", "books", "資料", "部門で集めた資料と、一次出典の確認状態"],
   ["#/trash", "trash", "最近削除した項目", "消したMTG（議事録ごと）とタスク。30日のあいだ元に戻せる"],
   ["#/hearings", "handshake", "外部ヒアリング", "申請の一覧・承認・実施後の要点", (me) => me.canSeeHearings],

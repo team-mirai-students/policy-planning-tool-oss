@@ -112,6 +112,8 @@ export async function renderAdmin(el) {
           ${ok(data.settings.forum, "渉外フォーラム（ヒアリングのスレッド作成）")}
           ${ok(data.settings.notion, "Notion連携（MTG・定例の議事録をNotionに入れる）")}
         </ul>
+        <p><button type="button" class="small" id="notion-check">${ico("search")} Notionの「その他」ページにつながるか確かめる</button></p>
+        <div id="notion-check-result"></div>
         <div id="notion-backfill"></div>
         ${data.archived.length ? `<h3 class="small">アーカイブしたPJ</h3><ul class="settings-list">${data.archived.map((p) =>
           `<li><a href="#/projects/${p.id}">${esc(p.name)}</a>（PJの「編集」→ 状態で戻せます）</li>`).join("")}</ul>` : ""}
@@ -131,6 +133,13 @@ export async function renderAdmin(el) {
     </details>`);
   el.querySelector("#discord-hooks").addEventListener("toggle", (e) => { if (e.target.open && !e.target.dataset.loaded) loadDiscordHooks(el.querySelector("#discord-hooks-body")); e.target.dataset.loaded = "1"; });
   bindNotionBackfill(el.querySelector("#notion-backfill"));
+  // その他のMTGの議事録を入れるNotionのページに、ツール（インテグレーション）が入れるか
+  el.querySelector("#notion-check").addEventListener("click", (e) => busy(e.currentTarget, () => api("/api/admin/notion-check"))
+    .then((r) => {
+      el.querySelector("#notion-check-result").innerHTML = r.results
+        ? `<ul class="settings-list">${r.results.map((x) => `<li>${x.ok ? ico("check") : "⚠"} ${esc(x.label)}：${esc(x.message)}</li>`).join("")}</ul>`
+        : `<p class="small">⚠ ${esc(r.message)}</p>`;
+    }).catch(() => {}));
   bindStaffing(el, data, () => renderAdmin(el));
   const ROLE_LABEL = { heads: "部門長", reps: "代表" };
   const ROLE_NOTE = {

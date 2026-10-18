@@ -53,6 +53,8 @@ NOTION_TEIREI_DB = "23c2f6877cc181b9814bcfe73a3127b6"
 NOTION_TEIREI_FROM = "57"
 # 議事録の「部門」欄に入れる、政策立案部門のNotionページ
 NOTION_DEPT_PAGE = "23c2f6877cc180ccaa62e92a0e75d464"
+# その他のMTGの議事録を入れる、Notionの「部門」の中の「その他」のページ（中の「プロジェクト」欄に、プロジェクトごとのページを作る）
+NOTION_OTHER_PAGE = "2792f6877cc18037ab6acd423a70050a"
 
 # シークレット（`npx wrangler secret put <NAME>` で設定。コードやログには出さない）:
 #   DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET / SESSION_SECRET

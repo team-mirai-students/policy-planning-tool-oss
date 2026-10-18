@@ -2,6 +2,7 @@
 import { api, esc, fmtDateTime, busy, toast, jstDateTime, todayStr, pjPicker, pickItem, hashQuery } from "../lib.js";
 import { ico } from "../icons.js";
 import { teireiTargetList } from "./teirei.js";
+import { renderOtherStart } from "./other.js";
 
 const EVENT_KINDS = [["news", "ニュース勉強会"], ["exchange", "意見交換会"]];
 
@@ -10,11 +11,13 @@ export async function renderStart(el) {
   // PJ画面から来たときは、すぐPJのMTGへ
   if (q.get("project") || q.get("kind") === "pj") return renderPjStart(el);
   if (q.get("kind") === "event") return renderEventStart(el);
+  if (q.get("kind") === "other") return renderOtherStart(el);
   el.innerHTML = `
     <div class="page-heading left"><h1>${ico("talk")} どのMTGですか？</h1></div>
-    <div class="choices two">
+    <div class="choices">
       <a class="choice" href="#/start?kind=pj"><span class="choice-icon">${ico("folder")}</span><strong>PJのMTG</strong></a>
       <a class="choice" href="#/start?kind=event"><span class="choice-icon">${ico("news")}</span><strong>定例イベント<small class="choice-role">ニュース勉強会・意見交換会</small></strong></a>
+      <a class="choice" href="#/start?kind=other"><span class="choice-icon">${ico("talk")}</span><strong>その他のMTG<small class="choice-role">PJ・定例以外</small></strong></a>
     </div>`;
 }
 

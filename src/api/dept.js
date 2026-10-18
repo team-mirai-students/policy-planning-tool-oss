@@ -111,6 +111,10 @@ function collectStatements(env, meetingId, heldOn, now) {
     env.DB.prepare(`UPDATE dept_reports SET dept_meeting_id = ?1, held_on = '' WHERE ${pending}`).bind(meetingId, heldOn),
     // その日の定例に向けて書いた事務連絡 → 日付を決めずに書いた事務連絡、の順に移す
     move("dept_notice_days", "held_on = ?2").bind(meetingId, heldOn),
+    env.DB.prepare(
+      `UPDATE dept_meetings SET notion_url = (SELECT notion_url FROM dept_notice_days WHERE held_on = ?2)
+       WHERE id = ?1 AND COALESCE(notion_url, '') = '' AND COALESCE((SELECT notion_url FROM dept_notice_days WHERE held_on = ?2), '') != ''`
+    ).bind(meetingId, heldOn),
     env.DB.prepare("DELETE FROM dept_notice_days WHERE held_on = ?").bind(heldOn),
     move("dept_notice_draft", "id = 1").bind(meetingId),
     env.DB.prepare("UPDATE dept_notice_draft SET notice = '', news = '', exchange = '', layout = '', version = version + 1, updated_at = ? WHERE id = 1 AND (notice != '' OR news != '' OR exchange != '' OR layout != '')").bind(now),
@@ -151,7 +155,6 @@ export async function syncTeireiNotion(env, id) {
     await env.DB.prepare("UPDATE dept_meetings SET notion_url = 'skip' WHERE id = ? AND (notion_url IS NULL OR notion_url = '')").bind(meeting.id).run();
     return;
   }
-  const title = `${String(meeting.number).padStart(3, "0")}_政策立案部門定例第${meeting.number}回`;
   const { results: reports } = await env.DB.prepare(
     `SELECT r.*, p.name AS project_name FROM dept_reports r JOIN projects p ON p.id = r.project_id WHERE r.dept_meeting_id = ? ORDER BY p.created_at`
   ).bind(meeting.id).all();
@@ -160,18 +163,47 @@ export async function syncTeireiNotion(env, id) {
   ).bind(meeting.id).all();
   const children = teireiBlocks({ ...meeting, reports, missing, appUrl: env.APP_URL ? `${env.APP_URL}/#/teirei/${meeting.id}` : "" });
   if (meeting.notion_url === "skip") return;
-  if (meeting.notion_url) {
-    if (meeting.notion_url.startsWith("merge:")) return replaceToolSection(env, meeting.notion_url.slice(6), children);
-    return replaceNotionPage(env, meeting.notion_url, title, children);
+  await putTeireiNotion(env, { number: meeting.number, date: meeting.held_on, children, current: meeting.notion_url,
+    save: (url) => env.DB.prepare("UPDATE dept_meetings SET notion_url = ? WHERE id = ? AND (notion_url IS NULL OR notion_url = '')").bind(url, meeting.id).run() });
+}
+
+// Notionの定例の議事録ページを書く：作ってあれば書き直す。同じ題名のページが手で作ってあれば、そのページの最後に足す。なければ作る
+async function putTeireiNotion(env, { number, date, children, current, save }) {
+  const title = `${String(number).padStart(3, "0")}_政策立案部門定例第${number}回`;
+  if (current) {
+    if (current.startsWith("merge:")) return replaceToolSection(env, current.slice(6), children);
+    return replaceNotionPage(env, current, title, children);
   }
   const existing = await findTeireiPage(env, title);
   if (existing) {
-    await env.DB.prepare("UPDATE dept_meetings SET notion_url = ? WHERE id = ? AND (notion_url IS NULL OR notion_url = '')").bind(`merge:${existing}`, meeting.id).run();
+    await save(`merge:${existing}`);
     return replaceToolSection(env, existing, children);
   }
-  const url = await createTeireiPage(env, { title, date: meeting.held_on, children });
-  await env.DB.prepare("UPDATE dept_meetings SET notion_url = ? WHERE id = ? AND (notion_url IS NULL OR notion_url = '')").bind(url, meeting.id).run();
+  await save(await createTeireiPage(env, { title, date, children }));
 }
+
+// まだ始めていない定例（day）に向けて書いた事務連絡・イベントを、Notionの定例の議事録にも入れる（事務連絡を「保存する」とき）
+// 第◯回は、その日より前の定例（作ってある定例と、予定でまだ作っていない定例）の数から数える。定例を始めると、このページを引き継ぐ
+export async function syncTeireiDayNotion(env, day) {
+  const row = await env.DB.prepare("SELECT * FROM dept_notice_days WHERE held_on = ?").bind(day).first();
+  if (!row) return;
+  const [{ n }, slots] = await Promise.all([
+    env.DB.prepare("SELECT COUNT(*) AS n FROM dept_meetings WHERE held_on < ?").bind(day).first(),
+    upcomingSlots(env, 10),
+  ]);
+  const number = n + slots.filter((s) => !s.meeting && s.starts_at.slice(0, 10) < day).length + firstNumber(env);
+  if (number < (Number(env.NOTION_TEIREI_FROM) || Infinity)) return;
+  const { results: reports } = await env.DB.prepare(
+    `SELECT r.*, p.name AS project_name FROM dept_reports r JOIN projects p ON p.id = r.project_id WHERE r.dept_meeting_id IS NULL AND r.held_on = ? ORDER BY p.created_at`
+  ).bind(day).all();
+  const { results: missing } = await env.DB.prepare(
+    `SELECT name FROM projects p WHERE status = 'active' AND NOT EXISTS (SELECT 1 FROM dept_reports r WHERE r.project_id = p.id AND r.dept_meeting_id IS NULL AND r.held_on = ?) ORDER BY created_at`
+  ).bind(day).all();
+  const children = teireiBlocks({ ...row, memo: "", reports, missing, appUrl: "" });
+  await putTeireiNotion(env, { number, date: day, children, current: row.notion_url,
+    save: (url) => env.DB.prepare("UPDATE dept_notice_days SET notion_url = ? WHERE held_on = ? AND (notion_url IS NULL OR notion_url = '')").bind(url, day).run() });
+}
+const syncLater = (env, ctx, job) => ctx?.waitUntil(job().catch((err) => console.error("teirei notion sync failed", err?.status, err?.code || err?.message)));
 export const teireiNotionOn = (env) => notionConfigured(env) && Boolean(env.NOTION_TEIREI_DB);
 
 async function updateDeptMeeting({ request, env, user, params, ctx }) {
@@ -331,7 +363,7 @@ async function saveEvent({ request, env, user, url, ctx }) {
         .bind(text, user.id, now, day, version).run();
   assertUpdated(res, EVENT_LABELS[field]);
   // 「保存する」「MTGを終える」のとき：作ってある定例なら、Notionの定例の議事録も書き直す
-  if (body.sync && meeting && teireiNotionOn(env)) ctx?.waitUntil(syncTeireiNotion(env, meeting.id).catch((err) => console.error("teirei notion sync failed", err?.status, err?.code || err?.message)));
+  if (body.sync && teireiNotionOn(env)) syncLater(env, ctx, () => (meeting ? syncTeireiNotion(env, meeting.id) : syncTeireiDayNotion(env, day)));
   return { ok: true, version: meeting || version > 0 ? version + 1 : 1 };
 }
 
@@ -362,7 +394,7 @@ async function getNotice({ env, user, url }) {
   };
 }
 
-async function saveNotice({ request, env, user }) {
+async function saveNotice({ request, env, user, ctx }) {
   requireAdmin(user, "事務連絡を書けるのは、部門長・副部門長です");
   const body = await readJson(request);
   const day = body.day ? reqDate(body.day, "定例の日") : null;
@@ -387,6 +419,10 @@ async function saveNotice({ request, env, user }) {
       : await env.DB.prepare("UPDATE dept_notice_draft SET notice = ?, news = ?, exchange = ?, layout = ?, updated_by = ?, updated_at = ?, version = version + 1 WHERE id = 1 AND version = ?")
         .bind(notice, news, exchange, layout, user.id, now, version).run();
   assertUpdated(res, "事務連絡");
+  if (body.sync && teireiNotionOn(env)) {
+    if (t.target === "meeting") syncLater(env, ctx, () => syncTeireiNotion(env, t.meeting.id));
+    else if (t.target === "day") syncLater(env, ctx, () => syncTeireiDayNotion(env, day));
+  }
   return { ok: true, version: version + 1 };
 }
 

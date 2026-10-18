@@ -346,3 +346,41 @@ export async function createNotionPage(env, parentUrl, title, children) {
   await appendBlocks(env, data.id, children.slice(100));
   return data.url;
 }
+
+// ---------- その他のMTG ----------
+// カテゴリーのページ（例：「その他」）の中の「プロジェクト」欄を探す：名前に「プロジェクト」が入ったデータベース（段組みの中も1段見る）
+// 見つからなければ、そのページの中に直接ページを作る。ページに入れない（接続されていない）ときは、Notionのエラーをそのまま投げる
+export async function findOtherParent(env, pageId) {
+  if (!pageId) throw Object.assign(new Error("notion"), { status: 404, code: "object_not_found" });
+  await call(env, `/pages/${pageId}`, "GET");
+  const dbs = [];
+  const walk = async (id, depth) => {
+    for (const b of await listChildren(env, id)) {
+      if (b.type === "child_database") dbs.push({ id: b.id, title: b.child_database.title || "" });
+      else if (depth > 0 && (b.type === "column_list" || b.type === "column")) await walk(b.id, depth - 1);
+    }
+  };
+  await walk(pageId, 2);
+  const db = dbs.find((d) => /プロジェクト|project/i.test(d.title));
+  return db ? { database_id: db.id, title: db.title } : { page_id: pageId };
+}
+
+// プロジェクトのページを作る（中に見出し「議事録」。MTGの議事録はこの下に1回ずつ入る）。作ったページのURLを返す
+export async function createGroupPage(env, parent, name) {
+  const children = [{ object: "block", type: "heading_2", heading_2: { rich_text: rich("議事録") } }];
+  if (parent.database_id) {
+    const db = await call(env, `/databases/${parent.database_id}`, "GET");
+    const titleProp = Object.entries(db.properties || {}).find(([, p]) => p.type === "title")?.[0] || "title";
+    const page = await call(env, "/pages", "POST", { parent: { database_id: parent.database_id }, properties: { [titleProp]: { title: rich(name) } }, children });
+    return page.url;
+  }
+  const page = await call(env, "/pages", "POST", { parent: { page_id: parent.page_id }, properties: { title: { title: rich(name) } }, children });
+  return page.url;
+}
+
+// 1つの欄の議事録（Markdown）をNotionのブロックにする
+export function noteBlocks(md, appUrl = "") {
+  const blocks = lines(md).length ? nest(md) : [para("（なし）")];
+  if (appUrl) blocks.push(para(`政策立案ツールの議事録：${appUrl}`));
+  return blocks;
+}

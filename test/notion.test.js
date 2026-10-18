@@ -46,3 +46,32 @@ test("長い文章を分けるとき、絵文字を途中で切らない", async
   for (const p of parts) assert.ok(!/[\uD800-\uDBFF]$/.test(p) && !/^[\uDC00-\uDFFF]/.test(p), "絵文字が分かれている");
   assert.ok(parts.join("").includes("😀"));
 });
+
+test("その他のページの「プロジェクト」欄（段組みの中のデータベース）を見つけて、そこにページを作る", async () => {
+  const { findOtherParent, createGroupPage } = await import("../src/notion.js");
+  const calls = [];
+  const reply = (body) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, opt = {}) => {
+    const path = String(url).replace("https://api.notion.com/v1", "");
+    calls.push([opt.method, path, opt.body && JSON.parse(opt.body)]);
+    if (path === "/pages/p1") return reply({ id: "p1" });
+    if (path.startsWith("/blocks/p1/children")) return reply({ results: [{ id: "h", type: "heading_2" }, { id: "cl", type: "column_list" }], has_more: false });
+    if (path.startsWith("/blocks/cl/children")) return reply({ results: [{ id: "c1", type: "column" }], has_more: false });
+    if (path.startsWith("/blocks/c1/children")) return reply({ results: [{ id: "db1", type: "child_database", child_database: { title: "プロジェクト" } }], has_more: false });
+    if (path === "/databases/db1") return reply({ properties: { "名前": { type: "title" }, "タグ": { type: "select" } } });
+    if (path === "/pages" && opt.method === "POST") return reply({ url: "https://www.notion.so/new" });
+    return new Response("{}", { status: 404 });
+  };
+  try {
+    const env = { NOTION_TOKEN: "x" };
+    const parent = await findOtherParent(env, "p1");
+    assert.deepEqual(parent, { database_id: "db1", title: "プロジェクト" });
+    assert.equal(await createGroupPage(env, parent, "勉強会"), "https://www.notion.so/new");
+    const post = calls.find(([m, p]) => m === "POST" && p === "/pages")[2];
+    assert.deepEqual(post.parent, { database_id: "db1" });
+    assert.equal(post.properties["名前"].title[0].text.content, "勉強会");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
