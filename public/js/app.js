@@ -20,7 +20,7 @@ import { renderRounds, renderRound, renderStaffing } from "./views/seeds.js";
 import { renderHearings, renderHearingNew, renderHearing } from "./views/hearings.js";
 import { renderAdmin } from "./views/admin.js";
 import { renderSourcesView } from "./views/research.js";
-import { renderTeireiHome, renderTeireiMinutes, renderTeireiNotice, renderTeireiSchedule, renderTeirei, renderReportList, renderReport } from "./views/teirei.js";
+import { renderTeireiHome, renderTeireiMinutes, renderTeireiNotice, renderTeireiSchedule, renderTeirei, renderReportList, renderReport, renderTeireiEvent } from "./views/teirei.js";
 import { ico } from "./icons.js";
 
 const ROUTES = [
@@ -56,6 +56,7 @@ const ROUTES = [
   [/^\/teirei\/schedule$/, "home", () => renderTeireiSchedule],
   [/^\/teirei\/(\d+)$/, "home", (m) => (el) => renderTeirei(el, Number(m[1]))],
   [/^\/report$/, "projects", () => renderReportList],
+  [/^\/teirei-event$/, "home", () => renderTeireiEvent],
   [/^\/report\/(\d+)$/, "projects", (m) => (el) => renderReport(el, Number(m[1]))],
   [/^\/sources$/, "home", () => (el) => renderSourcesView(el)],
   [/^\/hearings$/, "projects", () => renderHearings],

@@ -19,9 +19,13 @@ export const routes = [
   ["GET", "/api/dept-schedules", listSchedules],
   ["POST", "/api/dept-schedules", createSchedule],
   ["DELETE", "/api/dept-schedules/:id", deleteSchedule],
+  ["GET", "/api/teirei-targets", listTeireiTargets],
+  ["GET", "/api/dept-event", getEvent],
+  ["PUT", "/api/dept-event", saveEvent],
 ];
 
 const EVENTS = ["news", "exchange"]; // ニュース勉強会・意見交換会
+const EVENT_LABELS = { news: "ニュース勉強会", exchange: "意見交換会" };
 // 定例の前に書いておける欄（事務連絡・ニュース勉強会・意見交換会）
 const NOTE_FIELDS = ["notice", "news", "exchange"];
 
@@ -84,13 +88,27 @@ function collectStatements(env, meetingId, heldOn, now) {
   }).join(", ");
   const moveLayout = (src, where) => `layout = CASE WHEN COALESCE((SELECT layout FROM ${src} WHERE ${where}), '') = '' OR layout != '' THEN layout ELSE (SELECT layout FROM ${src} WHERE ${where}) END`;
   const move = (src, where) => env.DB.prepare(`UPDATE dept_meetings SET ${moveNotice(src, where)}, ${moveLayout(src, where)}, version = version + 1 WHERE id = ?1`);
+  // 進捗共有の書き置き：この日に向けて書いたもの（held_on = その日）と、日を決めずに書いたもの（held_on = ''）
+  // 同じPJで両方あれば、日を決めずに書いたほうを、この日に向けて書いたほうの後ろに足して1つにする
+  const pending = "dept_meeting_id IS NULL AND held_on IN ('', ?2)";
+  const generic = (k) => `(SELECT g.${k} FROM dept_reports g WHERE g.dept_meeting_id IS NULL AND g.held_on = '' AND g.project_id = dept_reports.project_id)`;
+  const join = (k) => `${k} = CASE WHEN COALESCE(${generic(k)}, '') = '' THEN ${k} WHEN ${k} = '' THEN ${generic(k)} ELSE ${k} || char(10) || ${generic(k)} END`;
   return [
+    env.DB.prepare(
+      `UPDATE dept_reports SET ${["done", "next", "issues"].map(join).join(", ")}
+       WHERE dept_meeting_id IS NULL AND held_on = ?1 AND ?1 != ''
+         AND EXISTS (SELECT 1 FROM dept_reports g WHERE g.dept_meeting_id IS NULL AND g.held_on = '' AND g.project_id = dept_reports.project_id)`
+    ).bind(heldOn),
+    env.DB.prepare(
+      `DELETE FROM dept_reports WHERE dept_meeting_id IS NULL AND held_on = '' AND ?1 != ''
+       AND project_id IN (SELECT project_id FROM dept_reports WHERE dept_meeting_id IS NULL AND held_on = ?1)`
+    ).bind(heldOn),
     // 再開したとき：定例を終えたあとに書き直したPJは、新しいほうを残す
     env.DB.prepare(
       `DELETE FROM dept_reports WHERE dept_meeting_id = ?1
-       AND project_id IN (SELECT project_id FROM dept_reports WHERE dept_meeting_id IS NULL)`
-    ).bind(meetingId),
-    env.DB.prepare("UPDATE dept_reports SET dept_meeting_id = ? WHERE dept_meeting_id IS NULL").bind(meetingId),
+       AND project_id IN (SELECT project_id FROM dept_reports WHERE ${pending})`
+    ).bind(meetingId, heldOn),
+    env.DB.prepare(`UPDATE dept_reports SET dept_meeting_id = ?1, held_on = '' WHERE ${pending}`).bind(meetingId, heldOn),
     // その日の定例に向けて書いた事務連絡 → 日付を決めずに書いた事務連絡、の順に移す
     move("dept_notice_days", "held_on = ?2").bind(meetingId, heldOn),
     env.DB.prepare("DELETE FROM dept_notice_days WHERE held_on = ?").bind(heldOn),
@@ -182,59 +200,139 @@ async function updateDeptMeeting({ request, env, user, params, ctx }) {
   return { ok: true, version: version + 1 };
 }
 
-// 「定例の議事録を書く」で選べるPJ（自分が参加している進行中のPJ。管理者はすべて）
-async function listReportTargets({ env, user }) {
-  const meeting = await openMeeting(env);
+// ---------- どの定例か選ぶ（進捗を書く・定例イベントのMTG） ----------
+// 最近終わった定例（2回）／今日・これからの定例（作ってあるもの）／予定から次の3回。日付（held_on）ごとに1つ
+async function listTeireiTargets({ env }) {
+  const today = teireiDay();
+  const [{ results: past }, { results: ahead }, slots] = await Promise.all([
+    env.DB.prepare(`SELECT d.id, d.held_on, d.starts_at, d.ended_at, ${NUMBER_SQL} + ? AS number FROM dept_meetings d WHERE d.held_on < ? ORDER BY d.held_on DESC LIMIT 2`)
+      .bind(firstNumber(env), today).all(),
+    env.DB.prepare(`SELECT d.id, d.held_on, d.starts_at, d.ended_at, ${NUMBER_SQL} + ? AS number FROM dept_meetings d WHERE d.held_on >= ? ORDER BY d.held_on LIMIT 3`)
+      .bind(firstNumber(env), today).all(),
+    upcomingSlots(env, 3),
+  ]);
+  const byDay = new Map();
+  for (const s of slots) byDay.set(s.starts_at.slice(0, 10), { day: s.starts_at.slice(0, 10), starts_at: s.starts_at, meeting: null });
+  for (const m of [...past, ...ahead]) {
+    byDay.set(m.held_on, { day: m.held_on, starts_at: m.starts_at || byDay.get(m.held_on)?.starts_at || "", meeting: { ...withState(m, today), number: m.number } });
+  }
+  const targets = [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+  // 初めに選んでおくもの：今日かこれからの、いちばん近い定例
+  return { today, targets, suggested: targets.find((t) => t.day >= today)?.day || null };
+}
+
+// day（'YYYY-MM-DD'）の定例：作ってあればその定例、まだなら「その日に向けた書き置き」。day がなければ今までどおり（進行中の定例か、次の定例）
+async function reportTarget(env, day) {
+  if (!day) {
+    const meeting = await openMeeting(env);
+    return { meeting, meetingId: meeting?.id || 0, heldOn: "" };
+  }
+  const meeting = await env.DB.prepare("SELECT id, held_on, ended_at FROM dept_meetings WHERE held_on = ?").bind(day).first();
+  if (meeting) return { meeting, meetingId: meeting.id, heldOn: "" };
+  if (day < teireiDay()) throw new HttpError(404, "その日の定例は見つかりません");
+  return { meeting: null, meetingId: 0, heldOn: day };
+}
+const dayParam = (v) => (v ? reqDate(v, "定例の日") : null);
+
+// 「進捗を書く」で選べるPJ（自分が参加している進行中のPJ。管理者はすべて）。?day= の定例に書いたかどうかも付ける
+async function listReportTargets({ env, user, url }) {
+  const t = await reportTarget(env, dayParam(url.searchParams.get("day")));
   const { results } = await env.DB.prepare(
     `SELECT p.id, p.name, p.type, p.current_stage,
             EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_id = ?1) AS is_mine,
-            (SELECT r.updated_at FROM dept_reports r WHERE r.project_id = p.id AND COALESCE(r.dept_meeting_id, 0) = ?2) AS written_at
+            (SELECT r.updated_at FROM dept_reports r WHERE r.project_id = p.id AND COALESCE(r.dept_meeting_id, 0) = ?2 AND r.held_on = ?3) AS written_at
      FROM projects p WHERE p.status = 'active' ORDER BY is_mine DESC, p.created_at DESC`
-  ).bind(user.id, meeting?.id || 0).all();
-  return { projects: results.filter((p) => p.is_mine || user.isAdmin), todayMeetingId: meeting?.id || null };
+  ).bind(user.id, t.meetingId, t.heldOn).all();
+  return { projects: results.filter((p) => p.is_mine || user.isAdmin), todayMeetingId: t.meeting?.id || null, meeting: t.meeting };
 }
 
-// 進行中の定例があればその進捗共有、なければ次の定例に向けたものを書く
-async function getReport({ env, user, params }) {
+// ?day= の定例に向けた進捗共有（作ってある定例ならその中、まだならその日に向けた書き置き）
+async function getReport({ env, user, params, url }) {
   const project = await loadProject(env, params.id);
   await requireEditor(env, user, project.id);
-  const meeting = await openMeeting(env);
+  const t = await reportTarget(env, dayParam(url.searchParams.get("day")));
   const [report, previous] = await Promise.all([
     env.DB.prepare(
       `SELECT r.*, u.name AS updated_by_name FROM dept_reports r LEFT JOIN users u ON u.id = r.updated_by
-       WHERE r.project_id = ? AND COALESCE(r.dept_meeting_id, 0) = ?`
-    ).bind(project.id, meeting?.id || 0).first(),
+       WHERE r.project_id = ? AND COALESCE(r.dept_meeting_id, 0) = ? AND r.held_on = ?`
+    ).bind(project.id, t.meetingId, t.heldOn).first(),
     env.DB.prepare(
       `SELECT r.done, r.next, r.issues, d.held_on FROM dept_reports r JOIN dept_meetings d ON d.id = r.dept_meeting_id
-       WHERE r.project_id = ? AND d.id != ? ORDER BY d.held_on DESC LIMIT 1`
-    ).bind(project.id, meeting?.id || 0).first(),
+       WHERE r.project_id = ? AND d.id != ? AND d.held_on < ? ORDER BY d.held_on DESC LIMIT 1`
+    ).bind(project.id, t.meetingId, t.meeting?.held_on || t.heldOn || "9999").first(),
   ]);
   return {
     project: { id: project.id, name: project.name, type: project.type, current_stage: project.current_stage },
-    meeting,
+    meeting: t.meeting,
+    day: t.meeting?.held_on || t.heldOn || null,
     report: report || { done: "", next: "", issues: "", version: 0 },
     previous,
   };
 }
 
-async function saveReport({ request, env, user, params }) {
+// sync: true（「保存する」を押したとき）で、終わった定例に書いたなら、Notionの定例の議事録も書き直す
+async function saveReport({ request, env, user, params, ctx }) {
   const project = await loadProject(env, params.id);
   await requireEditor(env, user, project.id);
   const body = await readJson(request);
-  const meetingId = (await openMeeting(env))?.id || null;
+  const t = await reportTarget(env, dayParam(body.day));
   const values = [longText(body.done, 20000, "やったこと"), longText(body.next, 20000, "次にやること"), longText(body.issues, 20000, "困っていること"), user.id, Date.now()];
   const version = int(body.version, { min: 0, label: "版" });
   const res = version === 0
     ? await env.DB.prepare(
-        `INSERT OR IGNORE INTO dept_reports (done, next, issues, updated_by, updated_at, project_id, dept_meeting_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).bind(...values, project.id, meetingId).run()
+        `INSERT OR IGNORE INTO dept_reports (done, next, issues, updated_by, updated_at, project_id, dept_meeting_id, held_on)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(...values, project.id, t.meetingId || null, t.heldOn).run()
     : await env.DB.prepare(
         `UPDATE dept_reports SET done = ?, next = ?, issues = ?, updated_by = ?, updated_at = ?, version = version + 1
-         WHERE project_id = ? AND COALESCE(dept_meeting_id, 0) = ? AND version = ?`
-      ).bind(...values, project.id, meetingId || 0, version).run();
+         WHERE project_id = ? AND COALESCE(dept_meeting_id, 0) = ? AND held_on = ? AND version = ?`
+      ).bind(...values, project.id, t.meetingId, t.heldOn, version).run();
   assertUpdated(res, "進捗共有");
+  if (body.sync && t.meeting?.ended_at && teireiNotionOn(env)) ctx?.waitUntil(syncTeireiNotion(env, t.meeting.id).catch((err) => console.error("teirei notion sync failed", err?.status, err?.code || err?.message)));
   return { ok: true, version: version + 1 };
+}
+
+// ---------- 定例イベント（ニュース勉強会・意見交換会）のMTG：選んだ定例の議事録の、そのイベントの欄に書く ----------
+// 作ってある定例ならその議事録に直接、まだならその日に向けた書き置き（定例を始めると議事録に移る）。だれでも書ける
+async function eventTarget(env, url, body) {
+  const day = reqDate(body?.day ?? url.searchParams.get("day"), "定例の日");
+  const field = oneOf(body?.event ?? url.searchParams.get("event"), EVENTS, "イベント");
+  const meeting = await env.DB.prepare("SELECT id, held_on, ended_at, event, version FROM dept_meetings WHERE held_on = ?").bind(day).first();
+  if (!meeting && day < teireiDay()) throw new HttpError(404, "その日の定例は見つかりません");
+  return { day, field, meeting };
+}
+
+async function getEvent({ env, url }) {
+  const { day, field, meeting } = await eventTarget(env, url);
+  const row = meeting
+    ? await env.DB.prepare(`SELECT d.${field} AS text, d.version, d.updated_at, u.name AS updated_by_name FROM dept_meetings d LEFT JOIN users u ON u.id = d.updated_by WHERE d.id = ?`).bind(meeting.id).first()
+    : await env.DB.prepare(`SELECT d.${field} AS text, d.version, d.updated_at, u.name AS updated_by_name FROM dept_notice_days d LEFT JOIN users u ON u.id = d.updated_by WHERE d.held_on = ?`).bind(day).first();
+  const number = meeting ? (await env.DB.prepare(`SELECT ${NUMBER_SQL} + ? AS n FROM dept_meetings d WHERE d.id = ?`).bind(firstNumber(env), meeting.id).first()).n : null;
+  return {
+    day, event: field, target: meeting ? "meeting" : "day", meeting: meeting ? { id: meeting.id, ended: Boolean(meeting.ended_at), number } : null,
+    text: row?.text || "", version: row?.version ?? 0, updated_at: row?.updated_at || 0, updated_by_name: row?.updated_by_name || "",
+  };
+}
+
+async function saveEvent({ request, env, user, url, ctx }) {
+  const body = await readJson(request);
+  const { day, field, meeting } = await eventTarget(env, url, body);
+  // 開いたときと保存するときで行き先が変わった（そのあいだに定例が始まった）なら、読み込み直してもらう
+  if (body.target !== (meeting ? "meeting" : "day")) throw new HttpError(409, "定例の状態が変わりました。画面を再読み込みしてください");
+  const text = longText(body.text, 30000, EVENT_LABELS[field]);
+  const version = int(body.version, { min: 0, label: "版" });
+  const now = Date.now();
+  const res = meeting
+    ? await env.DB.prepare(`UPDATE dept_meetings SET ${field} = ?, event = CASE WHEN event = '' THEN ? ELSE event END, updated_by = ?, updated_at = ?, version = version + 1 WHERE id = ? AND version = ?`)
+      .bind(text, field, user.id, now, meeting.id, version).run()
+    : version === 0
+      ? await env.DB.prepare(`INSERT OR IGNORE INTO dept_notice_days (held_on, ${field}, updated_by, updated_at) VALUES (?, ?, ?, ?)`).bind(day, text, user.id, now).run()
+      : await env.DB.prepare(`UPDATE dept_notice_days SET ${field} = ?, updated_by = ?, updated_at = ?, version = version + 1 WHERE held_on = ? AND version = ?`)
+        .bind(text, user.id, now, day, version).run();
+  assertUpdated(res, EVENT_LABELS[field]);
+  // 「保存する」「MTGを終える」のとき：作ってある定例なら、Notionの定例の議事録も書き直す
+  if (body.sync && meeting && teireiNotionOn(env)) ctx?.waitUntil(syncTeireiNotion(env, meeting.id).catch((err) => console.error("teirei notion sync failed", err?.status, err?.code || err?.message)));
+  return { ok: true, version: meeting || version > 0 ? version + 1 : 1 };
 }
 
 // ---------- 事務連絡を書く（部門長・副部門長＝管理者） ----------

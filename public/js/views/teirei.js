@@ -255,26 +255,62 @@ export async function renderTeirei(el, id) {
   });
 }
 
-// ---------- 定例の議事録を書く：PJを選ぶ ----------
+// ---------- どの定例か選ぶ（進捗を書く・定例イベントのMTG）：最近の定例・今日の定例・これからの定例 ----------
+export const teireiTargetLabel = (t) => `${t.meeting?.number ? `第${t.meeting.number}回 ` : ""}${fmtDate(t.day)}${t.starts_at ? ` ${t.starts_at.slice(11, 16)}` : ""}の定例`;
+export function teireiTargetList(targets, suggested, href, today) {
+  if (!targets.length) return `<p class="muted small">定例の予定がありません。部門長・副部門長が「定例」→「定例を予定する」から登録できます。</p>`;
+  return `<ul class="pick-list">${targets.map((t) => pickItem({
+    href: href(t), name: teireiTargetLabel(t),
+    note: `${t.day === today ? `<span class="tag">今日</span>` : ""}${t.day === suggested ? `<span class="tag">次の定例</span>` : ""}${stateTag(t.meeting)}`,
+  })).join("")}</ul>`;
+}
+
+// ---------- 定例の議事録を書く：定例を選ぶ → PJを選ぶ ----------
 export async function renderReportList(el) {
-  const { projects, todayMeetingId } = await api("/api/dept-reports");
+  const day = hashQuery().get("day");
+  if (!day) {
+    const { today, targets, suggested } = await api("/api/teirei-targets");
+    // 定例の予定も記録もないときは、今までどおり「次の定例」に向けて書く
+    if (targets.length) {
+      el.innerHTML = `
+        <nav class="breadcrumb"><a href="#/teirei">定例</a> / 進捗を書く</nav>
+        <div class="page-heading left"><h1>${ico("note")} どの定例の進捗を書きますか？</h1></div>
+        ${teireiTargetList(targets, suggested, (t) => `#/report?day=${t.day}`, today)}`;
+      return;
+    }
+  }
+  const { projects, meeting } = await api(`/api/dept-reports${day ? `?day=${encodeURIComponent(day)}` : ""}`);
   el.innerHTML = `
-    <nav class="breadcrumb"><a href="#/teirei">定例</a> / 進捗を書く</nav>
+    <nav class="breadcrumb"><a href="#/teirei">定例</a> / <a href="#/report">進捗を書く</a>${day ? ` / ${fmtDate(day)}の定例` : ""}</nav>
     <div class="page-heading left"><h1>${ico("note")} どのPJの進捗を書きますか？</h1>
-      <p>${todayMeetingId ? "今日の定例" : "次の定例"}に向けて書きます</p></div>
-    ${pjPicker(projects, (p) => pickItem({ href: `#/report/${p.id}`, name: p.name,
+      <p>${day ? `${fmtDate(day)}の定例${meeting?.ended_at ? "（終わった定例）" : ""}` : meeting ? "今日の定例" : "次の定例"}に向けて書きます</p></div>
+    ${pjPicker(projects, (p) => pickItem({ href: `#/report/${p.id}${day ? `?day=${day}` : ""}`, name: p.name,
       note: p.written_at ? `<span class="tag">記入済み</span>` : "" }))}`;
   enhanceRich(el);
 }
 
 // ---------- 定例の議事録を書く：進捗共有の記入 ----------
 export async function renderReport(el, projectId) {
-  const { project: p, meeting, report, previous } = await api(`/api/projects/${projectId}/dept-report`);
+  const day = hashQuery().get("day");
+  // どの定例に向けて書くか、毎回選ぶ（定例の予定も記録もないときは「次の定例」）
+  if (!day) {
+    const { today, targets, suggested } = await api("/api/teirei-targets");
+    if (targets.length) {
+      el.innerHTML = `
+        <nav class="breadcrumb"><a href="#/teirei">定例</a> / <a href="#/report">進捗を書く</a></nav>
+        <div class="page-heading left"><h1>${ico("note")} どの定例の進捗を書きますか？</h1></div>
+        ${teireiTargetList(targets, suggested, (t) => `#/report/${projectId}?day=${t.day}`, today)}`;
+      return;
+    }
+  }
+  const q = day ? `?day=${encodeURIComponent(day)}` : "";
+  const { project: p, meeting, report, previous } = await api(`/api/projects/${projectId}/dept-report${q}`);
   let version = report.version;
   el.innerHTML = `
     <nav class="breadcrumb"><a href="#/teirei">定例</a> / <a href="#/report">進捗を書く</a> / ${esc(p.name)}</nav>
     <div class="page-heading left"><h1>${ico("note")} ${esc(p.name)}</h1>
-      <p>${meeting ? `${fmtDate(meeting.held_on)}の定例` : "次の定例"}で共有する進捗です。いまの工程：${stageLabel(p)}・<a href="#/projects/${p.id}">PJ画面へ</a></p></div>
+      <p>${day ? `${fmtDate(day)}の定例` : meeting ? `${fmtDate(meeting.held_on)}の定例` : "次の定例"}で共有する進捗です（<a href="#/report/${p.id}">定例を選び直す</a>）。いまの工程：${stageLabel(p)}・<a href="#/projects/${p.id}">PJ画面へ</a></p>
+      ${meeting?.ended_at ? `<p class="small">${ico("info")} 終わった定例です。「保存する」を押すと、Notionの定例の議事録にも入ります。</p>` : ""}</div>
     <form class="card form" id="report">
       ${FIELDS.map(([k, label]) => `<div class="field"><div class="section-head"><strong>${label}</strong></div><textarea name="${k}" data-rich rows="4" maxlength="20000" aria-label="${label}">${esc(report[k])}</textarea></div>`).join("")}
       <div class="form-actions">
@@ -287,11 +323,12 @@ export async function renderReport(el, projectId) {
   const form = el.querySelector("#report");
   guardForm(form);
   let base = { done: report.done, next: report.next, issues: report.issues };
-  const send = () => api(`/api/projects/${projectId}/dept-report`, { method: "PUT", body: { ...formData(form), version } })
+  let sync = false; // 「保存する」を押したときだけ、終わった定例ならNotionにも入れる
+  const send = () => api(`/api/projects/${projectId}/dept-report`, { method: "PUT", body: { ...formData(form), version, day, sync } })
     .catch(async (err) => {
       if (!/他の人が更新/.test(err.message)) throw err;
       // 同じPJのメンバーも同時に書いていた：相手の変更を取り込んで、もう一度保存する
-      const { report: latest } = await api(`/api/projects/${projectId}/dept-report`);
+      const { report: latest } = await api(`/api/projects/${projectId}/dept-report${q}`);
       let both = false;
       for (const [k] of FIELDS) {
         const r = mergeText(base[k], form[k].value, latest[k]);
@@ -301,14 +338,14 @@ export async function renderReport(el, projectId) {
       base = { done: latest.done, next: latest.next, issues: latest.issues };
       version = latest.version;
       if (both) toast("同じPJのメンバーも同じ欄を書いていたので、両方の内容を残しました。確認してください");
-      return api(`/api/projects/${projectId}/dept-report`, { method: "PUT", body: { ...formData(form), version } });
+      return api(`/api/projects/${projectId}/dept-report`, { method: "PUT", body: { ...formData(form), version, day, sync } });
     });
   const saveNow = () => send().then((res) => { base = formData(form); version = res.version; return res; });
-  const auto = autoSave(form, saveNow, { status: el.querySelector("#auto-status"), key: `report:${projectId}:${meeting?.id || "next"}`, label: "進捗" });
+  const auto = autoSave(form, saveNow, { status: el.querySelector("#auto-status"), key: `report:${projectId}:${day || meeting?.id || "next"}`, label: "進捗" });
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     if (auto.pending()) await auto.flush();
-    busy(e.submitter, saveNow)
+    busy(e.submitter, () => { sync = true; return saveNow().finally(() => { sync = false; }); })
       .then(() => { markSaved(form); toast("保存しました"); }).catch(() => {});
   });
 }
@@ -411,4 +448,63 @@ export async function renderTeireiSchedule(el) {
 async function reopenTeirei(id, version) {
   const v = version ?? (await api(`/api/dept-meetings/${id}`)).meeting.version;
   return api(`/api/dept-meetings/${id}`, { method: "PATCH", body: { reopen: true, version: v } });
+}
+
+// ---------- 定例イベント（ニュース勉強会・意見交換会）のMTG：選んだ定例の議事録の、そのイベントの欄に書く ----------
+// 作ってある定例なら議事録に直接、まだ始めていない定例なら書き置き（定例を始めると議事録に移る）
+// MTGとして始めたとき（start=1）だけタイマーと「MTGを終える」を出す
+export async function renderTeireiEvent(el) {
+  const qs = hashQuery();
+  const day = qs.get("day");
+  const event = qs.get("event");
+  const inMeeting = qs.get("start") === "1";
+  const query = `?day=${encodeURIComponent(day || "")}&event=${encodeURIComponent(event || "")}`;
+  const d = await api(`/api/dept-event${query}`);
+  const label = EVENTS[d.event];
+  let version = d.version;
+  let base = d.text;
+  let sync = false;
+  el.innerHTML = `
+    <nav class="breadcrumb"><a href="#/teirei">定例</a> / ${esc(label)}</nav>
+    <div class="page-heading left"><h1>${ico("news")} ${esc(label)}</h1>
+      <p>${d.meeting?.number ? `第${d.meeting.number}回 ` : ""}${fmtDate(d.day)}の定例の議事録の「${esc(label)}」に入ります${d.target === "day" ? "（その日の定例を始めると、議事録に移ります）" : ""}。</p></div>
+    ${inMeeting ? timerHtml(`event-${d.day}-${d.event}`, { bar: true }) : ""}
+    <form class="minutes" id="event-form">
+      <section class="card"><div class="section-head"><h2>${esc(label)}</h2></div>
+        <textarea name="text" data-rich rows="10" maxlength="30000" aria-label="${esc(label)}">${esc(d.text)}</textarea></section>
+      <div class="form-actions sticky">
+        ${d.updated_at ? `<span class="muted small">最終更新：${esc(d.updated_by_name)}・${fmtDateTime(jstDateTime(d.updated_at))}</span>` : ""}
+        <span class="muted small auto-status" id="auto-status">自動で保存されます</span>
+        ${d.meeting ? `<a class="button" href="#/teirei/${d.meeting.id}">定例の議事録を開く</a>` : ""}
+        ${inMeeting ? `<button type="button" class="primary" data-end>MTGを終える</button>` : `<button class="primary">保存する</button>`}
+      </div>
+    </form>`;
+  enhanceRich(el);
+  if (inMeeting) bindTimer(el, `event-${d.day}-${d.event}`, { auto: true });
+  const form = el.querySelector("#event-form");
+  guardForm(form);
+  const put = () => api("/api/dept-event", { method: "PUT", body: { day: d.day, event: d.event, target: d.target, text: form.text.value, version, sync } });
+  const saveNow = () => put()
+    .catch(async (err) => {
+      if (!/他の人が更新/.test(err.message)) throw err;
+      // ほかの人も同時に書いていた：相手の変更を取り込んで、もう一度保存する
+      const latest = await api(`/api/dept-event${query}`);
+      const r = mergeText(base, form.text.value, latest.text);
+      form.text.value = r.text;
+      version = latest.version;
+      if (r.both) toast("ほかの人も同じ欄を書いていたので、両方の内容を残しました。確認してください");
+      return put();
+    })
+    .then((res) => { version = res.version; base = form.text.value; return res; });
+  const auto = autoSave(form, saveNow, { status: el.querySelector("#auto-status"), key: `event:${d.day}:${d.event}`, label });
+  const finish = async (button, done) => {
+    if (auto.pending()) await auto.flush();
+    busy(button, () => { sync = true; return saveNow().finally(() => { sync = false; }); })
+      .then(() => { markSaved(form); done(); }).catch(() => {});
+  };
+  form.addEventListener("submit", (e) => { e.preventDefault(); finish(e.submitter, () => toast("保存しました")); });
+  form.querySelector("[data-end]")?.addEventListener("click", async (e) => {
+    if (!await confirmDialog(`${label}のMTGを終えますか？\n\n書いた内容は、${fmtDate(d.day)}の定例の議事録に入ります。`, { ok: "MTGを終える" })) return;
+    finish(e.currentTarget, () => { toast("MTGを終えました。議事録は定例に入りました"); location.hash = d.meeting ? `#/teirei/${d.meeting.id}` : "#/"; });
+  });
 }

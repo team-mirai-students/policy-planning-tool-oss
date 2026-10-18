@@ -277,3 +277,53 @@ test("一時中止したPJを、アーカイブ欄からPJ決めに入れ直す"
   await expect(card.locator("[name=restore]")).toBeChecked();
   expect(errors).toEqual([]);
 });
+
+test("定例イベントのMTGと進捗は、どの定例に入れるか選べる", async ({ page }) => {
+  const errors = watchErrors(page);
+  await login(page);
+  // 定例の予定を入れる（毎週月曜 22:00）
+  await page.goto("/#/teirei/schedule");
+  await page.getByRole("button", { name: "予定に追加" }).click();
+  await expect(page.locator(".toast")).toContainText("定例を予定しました");
+
+  // MTGを始める → 定例イベント → ニュース勉強会 → 次の定例
+  const word = `勉強会メモ${stamp}`;
+  await page.goto("/#/start");
+  await page.getByRole("link", { name: /定例イベント/ }).click();
+  await page.getByRole("button", { name: /ニュース勉強会/ }).click();
+  await page.locator(".pick-list .pick").first().click();
+  await expect(page.locator(".timer")).toBeVisible();
+  const day = new URL(page.url().replace("#/teirei-event", "x")).searchParams.get("day");
+  await page.locator("#event-form .rich-editor").first().click();
+  await page.keyboard.type(word);
+  await page.getByRole("button", { name: "MTGを終える" }).click();
+  await confirm(page, "MTGを終える");
+  await expect(page.locator(".toast")).toContainText("MTGを終えました");
+  const ev = await page.evaluate((d) => fetch(`/api/dept-event?day=${d}&event=news`).then((r) => r.json()), day);
+  expect(ev.text).toContain(word);
+
+  // 進捗を書く：まず定例を選ぶ
+  await page.goto("/#/report");
+  await expect(page.locator("#app h1")).toContainText("どの定例の進捗");
+  await page.locator(".pick-list .pick").first().click();
+  await expect(page.locator("#app h1")).toContainText("どのPJの進捗");
+
+  // その定例に向けて書いた進捗と、日を決めずに書いた進捗は、その定例を始めると1つにまとまって入る
+  const merged = await page.evaluate(async (d) => {
+    const j = (u, o) => fetch(u, o && { method: o.method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(o.body) }).then((r) => r.json());
+    const { projects, meeting: before } = await j(`/api/dept-reports?day=${d}`);
+    const pid = projects[0].id;
+    const v0 = (await j(`/api/projects/${pid}/dept-report`)).report.version;
+    await j(`/api/projects/${pid}/dept-report`, { method: "PUT", body: { done: "日を決めずに書いた", next: "", issues: "", version: v0 } });
+    const v1 = (await j(`/api/projects/${pid}/dept-report?day=${d}`)).report.version;
+    await j(`/api/projects/${pid}/dept-report`, { method: "PUT", body: { done: "この日に向けて書いた", next: "", issues: "", version: v1, day: d } });
+    const { id } = await j("/api/dept-meetings", { method: "POST", body: { starts_at: `${d}T22:00` } });
+    const { reports, meeting } = await j(`/api/dept-meetings/${id}`);
+    return { fresh: !before, done: reports.find((r) => r.project_id === pid)?.done, news: meeting.news };
+  }, day);
+  expect(merged.done).toContain("この日に向けて書いた");
+  // （前の回のテストで、その日の定例がもう始まっていたときは、両方とも同じ定例に直接入るので、まとめる確認はしない）
+  if (merged.fresh) expect(merged.done).toContain("日を決めずに書いた");
+  expect(merged.news).toContain(word);
+  expect(errors).toEqual([]);
+});

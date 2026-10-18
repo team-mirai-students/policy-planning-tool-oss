@@ -47,13 +47,13 @@ async function remindTeireiReports(env) {
   const meeting = await env.DB.prepare("SELECT id FROM dept_meetings WHERE held_on = ?").bind(today).first();
   const { results: projects } = await env.DB.prepare(
     `SELECT p.id, p.name FROM projects p WHERE p.status = 'active'
-       AND NOT EXISTS (SELECT 1 FROM dept_reports r WHERE r.project_id = p.id AND (r.dept_meeting_id IS NULL OR r.dept_meeting_id = ?))`
-  ).bind(meeting?.id || 0).all();
+       AND NOT EXISTS (SELECT 1 FROM dept_reports r WHERE r.project_id = p.id AND ((r.dept_meeting_id IS NULL AND r.held_on IN ('', ?2)) OR r.dept_meeting_id = ?1))`
+  ).bind(meeting?.id || 0, today).all();
   for (const p of projects) {
     const { results: members } = await env.DB.prepare("SELECT user_id FROM project_members WHERE project_id = ?").bind(p.id).all();
     await notify(env, members.map((r) => r.user_id),
       `【今日は部門の定例】${slot.slice(11, 16)}から定例です。「${p.name}」の進捗（やったこと・次にやること・困っていること）を書いておきましょう`,
-      `#/report/${p.id}`);
+      `#/report/${p.id}?day=${today}`);
   }
 }
 

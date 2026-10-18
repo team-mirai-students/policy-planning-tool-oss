@@ -1,8 +1,41 @@
-// ミーティングを始める：PJを選ぶ → 「予定していたMTG」か「臨時のMTG」かを選ぶ → 議事録を開く
+// ミーティングを始める：PJのMTGか定例イベントかを選ぶ。PJのMTGは、PJを選ぶ → 「予定していたMTG」か「臨時のMTG」かを選ぶ → 議事録を開く
 import { api, esc, fmtDateTime, busy, toast, jstDateTime, todayStr, pjPicker, pickItem, hashQuery } from "../lib.js";
 import { ico } from "../icons.js";
+import { teireiTargetList } from "./teirei.js";
+
+const EVENT_KINDS = [["news", "ニュース勉強会"], ["exchange", "意見交換会"]];
 
 export async function renderStart(el) {
+  const q = hashQuery();
+  // PJ画面から来たときは、すぐPJのMTGへ
+  if (q.get("project") || q.get("kind") === "pj") return renderPjStart(el);
+  if (q.get("kind") === "event") return renderEventStart(el);
+  el.innerHTML = `
+    <div class="page-heading left"><h1>${ico("talk")} どのMTGですか？</h1></div>
+    <div class="choices two">
+      <a class="choice" href="#/start?kind=pj"><span class="choice-icon">${ico("folder")}</span><strong>PJのMTG</strong></a>
+      <a class="choice" href="#/start?kind=event"><span class="choice-icon">${ico("news")}</span><strong>定例イベント<small class="choice-role">ニュース勉強会・意見交換会</small></strong></a>
+    </div>`;
+}
+
+// 定例イベント：イベントを選ぶ → どの定例の議事録に入れるか選ぶ → 議事録（タイマーつき）が開く
+async function renderEventStart(el) {
+  const { today, targets, suggested } = await api("/api/teirei-targets");
+  const draw = (event) => {
+    el.innerHTML = `
+      <nav class="breadcrumb"><a href="#/start">MTGを始める</a> / 定例イベント</nav>
+      <div class="page-heading left"><h1>${ico("news")} ${event ? "どの定例の議事録に入れますか？" : "どのイベントですか？"}</h1>
+        ${event ? `<p>${EVENT_KINDS.find(([k]) => k === event)[1]}の議事録は、選んだ定例の議事録に入ります</p>` : ""}</div>
+      ${event ? teireiTargetList(targets, suggested, (t) => `#/teirei-event?day=${t.day}&event=${event}&start=1`, today)
+        + `<div class="form-actions"><button type="button" data-back>← イベントを選び直す</button></div>`
+        : `<ul class="pick-list">${EVENT_KINDS.map(([k, l]) => `<li><button type="button" class="pick" data-event="${k}"><span class="pick-name">${l}</span><span class="pick-arrow" aria-hidden="true">›</span></button></li>`).join("")}</ul>`}`;
+    el.querySelectorAll("[data-event]").forEach((b) => b.addEventListener("click", () => draw(b.dataset.event)));
+    el.querySelector("[data-back]")?.addEventListener("click", () => draw(null));
+  };
+  draw(null);
+}
+
+async function renderPjStart(el) {
   const { projects } = await api("/api/meeting-start");
   // どこから始めたか（MTGを終えたら、その画面に戻る）：PJ画面から来たら PJ、それ以外はホーム
   const from = hashQuery().get("project") ? "project" : "home";
