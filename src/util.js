@@ -120,16 +120,16 @@ async function roleIds(env, table, envIds) {
 }
 export const headIds = (env) => roleIds(env, "heads", env.HEAD_IDS);
 export const repIds = (env) => roleIds(env, "reps", env.REP_IDS);
-// 部門長からのお知らせを受け取る人（部門長 ＋ ADMIN_IDS）
-export async function leaderIds(env) {
-  return [...new Set([...(await headIds(env)), ...idList(env.ADMIN_IDS)])];
-}
-
-// 管理者全員（部門長・ADMIN_IDS・管理者メニューで足した人）。個人PJを始めたときのお知らせ先
+// 部門長・副部門長へのお知らせ（承認待ち・資料の送付・個人PJの開始）を受け取る人＝管理者全員
+// 部門長 ＋ ADMIN_IDS ＋ 管理者メニューで足した人（副部門長など。前はここが抜けていて、副部門長に届かなかった）
 export async function adminIds(env) {
   const { results } = await env.DB.prepare("SELECT user_id FROM admins").all();
-  return [...new Set([...(await leaderIds(env)), ...results.map((r) => r.user_id)])];
+  const ids = [...new Set([...(await headIds(env)), ...idList(env.ADMIN_IDS), ...results.map((r) => r.user_id)])];
+  // 受け取る人が1人もいない（部門長も管理者も未設定）と、依頼がどこにも届かない。気づけるようにエラーの記録に残す
+  if (!ids.length) console.error("leader notification has no recipients: set 部門長 in the admin menu");
+  return ids;
 }
+export const leaderIds = adminIds;
 
 // 楽観ロック：更新件数が0なら、他の人が先に更新している
 export function assertUpdated(result, what = "この内容") {
