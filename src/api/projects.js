@@ -28,17 +28,22 @@ export const routes = [
   ["DELETE", "/api/checklist/:id", deleteChecklistItem],
 ];
 
-async function listProjects({ env, user }) {
+// ?archived=1 なら、一時中止（アーカイブ）したPJも返す（PJ一覧の「アーカイブ」欄）。ほかの画面では返さない
+async function listProjects({ env, user, url }) {
+  const withArchived = url?.searchParams.get("archived") === "1" ? 1 : 0;
   const { results: projects } = await env.DB.prepare(
-    `SELECT p.id, p.name, p.type, p.description, p.status, p.current_stage, p.start_date, p.presentation_date, p.completion_requested_at,
+    `SELECT p.id, p.name, p.type, p.description, p.status, p.personal, p.current_stage, p.start_date, p.presentation_date, p.completion_requested_at,
             p.meeting_mode, s.due_date AS stage_due,
+            -- 一時中止したPJが、もうPJ決めに種として入っているか
+            (p.status = 'archived' AND EXISTS (SELECT 1 FROM seeds sd JOIN seed_rounds r ON r.id = sd.round_id
+               WHERE sd.prev_project_id = p.id AND sd.project_id IS NULL AND r.archived = 0)) AS requeued,
             (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status != 'done') AS open_tasks,
             (SELECT MIN(starts_at) FROM meetings m WHERE m.project_id = p.id AND m.cancelled = 0 AND m.starts_at >= ?1) AS next_meeting
      FROM projects p
      LEFT JOIN project_stages s ON s.project_id = p.id AND s.stage_no = p.current_stage
-     WHERE p.status != 'archived'
-     ORDER BY p.status = 'done', p.created_at DESC`
-  ).bind(nowJst()).all();
+     WHERE ?2 OR p.status != 'archived'
+     ORDER BY p.status = 'archived', p.status = 'done', p.updated_at DESC`
+  ).bind(nowJst(), withArchived).all();
   const { results: members } = await env.DB.prepare(
     `SELECT pm.project_id, u.id, u.name, u.avatar FROM project_members pm JOIN users u ON u.id = pm.user_id`
   ).all();
@@ -93,8 +98,9 @@ function memberList(body) {
   return [...new Set(ids)].slice(0, 30);
 }
 
-async function createProject({ request, env, user }) {
-  return { id: await insertProject(env, user, await readJson(request)) };
+// PJは、PJ決めの種から作る（管理者の「正式なPJにする」か、種の「個人PJとして進める」）。ここから直接は作れない
+async function createProject() {
+  throw new HttpError(403, "PJは、PJ決めの種から作ります（種の「⋯」→「個人PJとして進める」）");
 }
 
 // PJを作る（PJ決めの開票結果から作るときにも使う）。作った人は必ずメンバーに入る

@@ -431,7 +431,7 @@ function prefetchFor(hash) {
   const path = hash.replace(/^#/, "").split("?")[0];
   let m;
   if ((m = path.match(/^\/projects\/(\d+)$/))) return [`/api/projects/${m[1]}`];
-  if (path === "/projects") return ["/api/projects", "/api/rounds"];
+  if (path === "/projects") return ["/api/projects?archived=1", "/api/rounds"];
   if ((m = path.match(/^\/meetings\/(\d+)$/))) return [`/api/meetings/${m[1]}`];
   if ((m = path.match(/^\/seeds\/(\d+)$/))) return [`/api/rounds/${m[1]}`];
   if (path === "/me") return ["/api/my-tasks", "/api/projects"];

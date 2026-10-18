@@ -1,8 +1,8 @@
 // PJ決め：募集回・政策の種・リサーチメモ・ランク付け投票・開票・PJ化
-import { HttpError, readJson, clean, required, int, optUrl, nowJst, assertUpdated } from "../util.js";
+import { HttpError, readJson, clean, required, int, optUrl, nowJst, assertUpdated, adminIds } from "../util.js";
 import { rcvResults, suggestAssignment } from "../rcv.js";
 import { insertProject } from "./projects.js";
-import { requireAdmin as requireAdminFor, assertUsers } from "./common.js";
+import { requireAdmin as requireAdminFor, assertUsers, canEdit } from "./common.js";
 import { syncSurveyRound, surveyLinked } from "../survey-sync.js";
 import { notify } from "../notify.js";
 import { notionConfigured, createProjectPage } from "../notion.js";
@@ -29,6 +29,7 @@ export const routes = [
   ["POST", "/api/seeds/:id/project", createProjectFromSeed],
   ["GET", "/api/seeds/:id/project", getSeedProjectFootprint],
   ["DELETE", "/api/seeds/:id/project", undoProjectFromSeed],
+  ["POST", "/api/projects/:id/requeue", requeueProject],
 ];
 
 const CATEGORY_KEYS = ["news", "seicho", "bucho"];
@@ -68,15 +69,52 @@ function roundFields(body) {
 // 「政策の種を出す」：いつでも種を出せるように、受付中の募集回を返す。なければ「次のPJ決め」を作る
 // （締め切りなし。管理者があとで名前・締め切り・決めるPJの数を設定する）
 async function openSeedBox({ env, user }) {
+  const { round, created } = await openRound(env, user);
+  return created ? { id: round.id, created } : { id: round.id };
+}
+
+async function openRound(env, user) {
   const { results } = await env.DB.prepare(
     "SELECT * FROM seed_rounds WHERE archived = 0 AND source != 'survey' ORDER BY created_at DESC"
   ).all();
   const open = results.find((r) => !isClosed(r));
-  if (open) return { id: open.id };
+  if (open) return { round: open };
   const row = await env.DB.prepare(
-    "INSERT INTO seed_rounds (title, deadline, seats, source, created_by, created_at) VALUES (?, NULL, 3, '', ?, ?) RETURNING id"
+    "INSERT INTO seed_rounds (title, deadline, seats, source, created_by, created_at) VALUES (?, NULL, 3, '', ?, ?) RETURNING *"
   ).bind("次のPJ決め", user.id, Date.now()).first();
-  return { id: row.id, created: true };
+  return { round: row, created: true };
+}
+
+// 一時中止（アーカイブ）したPJを、もう一度PJ決めの種として出す。記録はPJに残したまま
+// 種を「正式なPJにする」「個人PJとして進める」とき、このPJを記録ごと戻すか選べる（前のPJ）。できるのはPJメンバーと管理者
+async function requeueProject({ env, user, params, ctx }) {
+  const project = await env.DB.prepare("SELECT * FROM projects WHERE id = ?").bind(params.id).first();
+  if (!project) throw new HttpError(404, "PJが見つかりません");
+  if (project.status !== "archived") throw new HttpError(400, "PJ決めに入れられるのは、一時中止（アーカイブ）したPJです");
+  if (!(await canEdit(env, user, project.id))) throw new HttpError(403, "PJ決めに入れられるのは、PJメンバーと管理者です");
+  const already = await env.DB.prepare(
+    `SELECT 1 FROM seeds s JOIN seed_rounds r ON r.id = s.round_id
+     WHERE s.prev_project_id = ? AND s.project_id IS NULL AND r.archived = 0`
+  ).bind(project.id).first();
+  if (already) throw new HttpError(400, "このPJは、もうPJ決めに入っています");
+  const { round } = await openRound(env, user);
+  // そのPJを生んだ種が受付中のPJ決めにあるなら、新しく作らずに、その種をPJ決めに戻す
+  const origin = await env.DB.prepare("SELECT id FROM seeds WHERE round_id = ? AND project_id = ?").bind(round.id, project.id).first();
+  if (origin) {
+    await env.DB.prepare("UPDATE seeds SET project_id = NULL, prev_project_id = ? WHERE id = ?").bind(project.id, origin.id).run();
+    refreshDiscord(env, ctx, "r", round.id);
+    return { round_id: round.id, round_title: round.title, seed_id: origin.id };
+  }
+  const title = project.name.slice(0, 60);
+  const dup = await env.DB.prepare("SELECT 1 FROM seeds WHERE round_id = ? AND title = ?").bind(round.id, title).first();
+  if (dup) throw new HttpError(400, `「${round.title}」に、同じ名前の種がもうあります`);
+  const now = Date.now();
+  const row = await env.DB.prepare(
+    `INSERT INTO seeds (round_id, title, description, tag, categories, created_by, prev_project_id, sort, created_at, updated_at)
+     VALUES (?1, ?2, ?3, '', '[]', ?4, ?5, (SELECT COALESCE(MAX(sort), 0) + 1 FROM seeds WHERE round_id = ?1), ?6, ?6) RETURNING id`
+  ).bind(round.id, title, clean(project.description, 400), user.id, project.id, now).first();
+  refreshDiscord(env, ctx, "r", round.id);
+  return { round_id: round.id, round_title: round.title, seed_id: row.id };
 }
 
 async function listRounds({ env }) {
@@ -389,13 +427,16 @@ async function deleteNote({ env, user, params }) {
 }
 
 // 種を正式なPJにする（管理者）。投票は外部のアンケートで行うこともあるので、開票結果がなくても作れる
+// personal=true は「個人PJとして進める」：だれでもできる。始めた人は必ずメンバーに入り、管理者にお知らせが届く
 async function createProjectFromSeed({ request, env, user, params, ctx }) {
-  requireAdmin(user, "種からPJを作ること");
+  const body = await readJson(request);
+  const personal = Boolean(body.personal);
+  if (!personal) requireAdmin(user, "種を正式なPJにすること");
   const seed = await loadSeed(env, params.id);
   if (seed.project_id) throw new HttpError(400, "この種はすでにPJになっています");
-  const body = await readJson(request);
   if (body.restore) {
-    const res = await restoreProjectFromSeed(env, user, seed, body);
+    const res = await restoreProjectFromSeed(env, user, seed, body, personal);
+    if (personal) await notifyPersonalStart(env, user, res.id);
     syncPeopleLater(env, ctx, [res.id]);
     return res;
   }
@@ -403,13 +444,17 @@ async function createProjectFromSeed({ request, env, user, params, ctx }) {
     meeting_mode: "adhoc",
     ...body,
     description: body.description ?? seed.description,
-  }, { includeCreator: false });
+  }, { includeCreator: personal });
   // 同時に2回押されても、PJに結び付くのは最初の1つだけ
   const res = await env.DB.prepare("UPDATE seeds SET project_id = ? WHERE id = ? AND project_id IS NULL")
     .bind(projectId, seed.id).run();
   if (!res.meta.changes) {
     await env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(projectId).run();
     throw new HttpError(409, "この種はすでにPJになっています");
+  }
+  if (personal) {
+    await env.DB.prepare("UPDATE projects SET personal = 1 WHERE id = ?").bind(projectId).run();
+    await notifyPersonalStart(env, user, projectId);
   }
   if (notionConfigured(env)) ctx?.waitUntil(makeNotionProjectPage(env, projectId).catch((err) => console.error("notion project page failed", err?.status, err?.code || err?.message)));
   return { id: projectId };
@@ -428,12 +473,19 @@ async function makeNotionProjectPage(env, projectId) {
   if (url) await env.DB.prepare("UPDATE projects SET notion_url = ? WHERE id = ? AND (notion_url IS NULL OR notion_url = '')").bind(url, projectId).run();
 }
 
+// 個人PJとして始まったことを、管理者全員に知らせる
+async function notifyPersonalStart(env, user, projectId) {
+  const project = await env.DB.prepare("SELECT name FROM projects WHERE id = ?").bind(projectId).first();
+  await notify(env, await adminIds(env), `${user.name}さんが「${project.name}」を個人PJとして始めました`, `#/projects/${projectId}`);
+}
+
 // 取り消したPJを戻す：議事録・タスク・MTGなどの記録はそのまま。名前・概要・メンバーは、いま選んだもので上書きする
-async function restoreProjectFromSeed(env, user, seed, body) {
+async function restoreProjectFromSeed(env, user, seed, body, personal = false) {
   const prev = seed.prev_project_id
     ? await env.DB.prepare("SELECT * FROM projects WHERE id = ? AND status = 'archived'").bind(seed.prev_project_id).first() : null;
   if (!prev) throw new HttpError(400, "戻せる前のPJがありません。新しく作ってください");
-  const members = [...new Set((Array.isArray(body.member_ids) ? body.member_ids : []).filter((x) => typeof x === "string"))].slice(0, 30);
+  // 個人PJとして戻すときは、戻した人も必ずメンバーに入る
+  const members = [...new Set([...(personal ? [user.id] : []), ...(Array.isArray(body.member_ids) ? body.member_ids : []).filter((x) => typeof x === "string")])].slice(0, 30);
   if (!members.length) throw new HttpError(400, "メンバーを1人以上選んでください");
   await assertUsers(env, members);
   const { results: before } = await env.DB.prepare("SELECT user_id FROM project_members WHERE project_id = ?").bind(prev.id).all();
@@ -441,8 +493,8 @@ async function restoreProjectFromSeed(env, user, seed, body) {
     .bind(prev.id, seed.id).run();
   if (!res.meta.changes) throw new HttpError(409, "この種はすでにPJになっています");
   await env.DB.batch([
-    env.DB.prepare("UPDATE projects SET status = 'active', name = ?, description = ?, updated_at = ?, version = version + 1 WHERE id = ?")
-      .bind(required(body.name, 60, "PJ名"), clean(body.description ?? prev.description, 400), Date.now(), prev.id),
+    env.DB.prepare("UPDATE projects SET status = 'active', personal = ?, name = ?, description = ?, updated_at = ?, version = version + 1 WHERE id = ?")
+      .bind(personal ? 1 : 0, required(body.name, 60, "PJ名"), clean(body.description ?? prev.description, 400), Date.now(), prev.id),
     env.DB.prepare("DELETE FROM project_members WHERE project_id = ?").bind(prev.id),
     ...members.map((uid) => env.DB.prepare("INSERT INTO project_members (project_id, user_id) VALUES (?, ?)").bind(prev.id, uid)),
   ]);

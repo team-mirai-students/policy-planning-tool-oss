@@ -162,6 +162,7 @@ function renderSeeds(body, data, reload) {
               <details class="card-menu"><summary aria-label="その他の操作">⋯</summary><div class="card-menu-panel">
                 <button type="button" data-notes="${s.id}">${ico("note")} リサーチメモ（${s.notes}）</button>
                 ${s.manageable ? `<button type="button" data-edit="${s.id}">${ico("edit")} 編集</button><button type="button" class="danger-text" data-del="${s.id}">${ico("trash")} 削除</button>` : ""}
+                ${!s.project ? `<button type="button" data-personal="${s.id}">${ico("rocket")} 個人PJとして進める</button>` : ""}
                 ${state.me.isAdmin && !s.project ? `<button type="button" data-promote="${s.id}">${ico("check")} 正式なPJにする</button>` : ""}
                 ${state.me.isAdmin && s.project ? `<button type="button" class="danger-text" data-undo-promote="${s.id}">${ico("undo")} 正式なPJを取り消す</button>` : ""}
                 ${s.author ? `<p class="muted small">投稿：${esc(s.author)}</p>` : ""}
@@ -235,6 +236,11 @@ function renderSeeds(body, data, reload) {
     body.querySelectorAll("[data-promote]").forEach((b) => b.addEventListener("click", () => {
       const seed = seeds.find((s) => s.id === Number(b.dataset.promote));
       showMakeForm(b.closest(".seed-card").querySelector(".make-form"), seed, seed, seed.voters.map((v) => v.id), reload);
+    }));
+    // 個人PJとして進める（だれでも）：自分はメンバーに入り、ほかのメンバーも選べる。始めると管理者にお知らせ
+    body.querySelectorAll("[data-personal]").forEach((b) => b.addEventListener("click", () => {
+      const seed = seeds.find((s) => s.id === Number(b.dataset.personal));
+      showMakeForm(b.closest(".seed-card").querySelector(".make-form"), seed, seed, [state.me.id], reload, { personal: true });
     }));
     // 正式なPJの取り消し：消える内容の件数を見せて、確認してから削除する
     body.querySelectorAll("[data-undo-promote]").forEach((b) => b.addEventListener("click", () =>
@@ -448,22 +454,24 @@ export function roundsTable(rounds, title, { highlight = null, hideZero = false 
 }
 
 // 管理者：種から正式なPJを作る（メンバーは割り振り案・希望者を初期値に、手で調整できる）
-function showMakeForm(box, seed, seedState, suggested, reload) {
+// personal=true：個人PJとして進める（だれでも。自分は必ずメンバーに入る。始めると管理者にお知らせ）
+function showMakeForm(box, seed, seedState, suggested, reload, { personal = false } = {}) {
   const picked = new Set(suggested);
   const prev = seedState?.prevProject;
   box.innerHTML = `
     <form class="form make" style="margin-top:12px">
+      ${personal ? `<p><strong>${ico("rocket")} 個人PJとして進める</strong><br><span class="muted small">普通のPJと同じように進められます。始めると管理者にお知らせが届きます。</span></p>` : ""}
       ${prev ? `<label class="check"><input type="checkbox" name="restore" checked>
         <span>前に取り消した「${esc(prev.name)}」を戻す<small>議事録・タスク・MTGなどの記録をそのまま引き継ぎます。外すと新しいPJとして作ります</small></span></label>` : ""}
       <label>PJ名<input name="name" maxlength="60" required value="${esc(seed.title)}"></label>
       <label>概要<textarea name="description" maxlength="400" rows="2">${esc(seedState?.description || "")}</textarea></label>
       <label>開始日（1週目の初日）<input name="start_date" type="date" required value="${nextMonday()}"></label>
-      <fieldset><legend>メンバー（希望した人・割り振り案を選択済み。調整できます）</legend>
+      <fieldset><legend>${personal ? "メンバー（自分は必ず入ります。一緒に進める人がいれば選んでください）" : "メンバー（希望した人・割り振り案を選択済み。調整できます）"}</legend>
         <div class="member-picker">${state.users.map((u) => `
-          <label class="chip-check"><input type="checkbox" name="member" value="${esc(u.id)}" ${picked.has(u.id) ? "checked" : ""}>${avatar(u)}<span>${esc(u.name)}</span></label>`).join("")}</div>
+          <label class="chip-check"><input type="checkbox" name="member" value="${esc(u.id)}" ${picked.has(u.id) ? "checked" : ""} ${personal && u.id === state.me.id ? "disabled" : ""}>${avatar(u)}<span>${esc(u.name)}</span></label>`).join("")}</div>
       </fieldset>
       <p class="muted small">MTGの進め方などは、作成後にPJの「編集」から設定できます（初期値は「毎回決める」）。</p>
-      <div class="form-actions"><button type="button" data-cancel-make>キャンセル</button><button class="primary">PJを作成する</button></div>
+      <div class="form-actions"><button type="button" data-cancel-make>キャンセル</button><button class="primary">${personal ? "個人PJとして始める" : "PJを作成する"}</button></div>
     </form>`;
   box.querySelector("[data-cancel-make]").addEventListener("click", () => {
     box.innerHTML = "";
@@ -479,14 +487,14 @@ function showMakeForm(box, seed, seedState, suggested, reload) {
     // 作る前に、PJ名・開始日・メンバーを確かめてもらう
     const names = member_ids.map((id) => state.users.find((u) => u.id === id)?.name || "").join("、");
     const restore = Boolean(f.restore?.checked);
-    const ok = await confirmDialog(`「${f.name.value}」を正式なPJにしますか？
+    const ok = await confirmDialog(`「${f.name.value}」を${personal ? "個人PJとして始めますか？" : "正式なPJにしますか？"}
 ${restore ? "前のPJを記録ごと戻します" : `開始日：${fmtDate(f.start_date.value)}`}
-メンバー（${member_ids.length}人）：${names}`, { ok: "正式なPJにする" });
+メンバー（${member_ids.length}人）：${names}${personal ? "\n\n管理者にお知らせが届きます。" : ""}`, { ok: personal ? "個人PJとして始める" : "正式なPJにする" });
     if (!ok) return;
     busy(button, () => api(`/api/seeds/${seed.id}/project`, {
-      method: "POST", body: { name: f.name.value, description: f.description.value, start_date: f.start_date.value, member_ids, restore },
+      method: "POST", body: { name: f.name.value, description: f.description.value, start_date: f.start_date.value, member_ids, restore, personal },
     })).then((res) => {
-      toast(res.restored ? "前のPJを記録ごと戻しました" : "PJを作成しました");
+      toast(res.restored ? "前のPJを記録ごと戻しました" : personal ? "個人PJを始めました" : "PJを作成しました");
       location.hash = `#/projects/${res.id}`;
     }).catch(() => {});
   });

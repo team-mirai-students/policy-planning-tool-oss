@@ -17,6 +17,20 @@ async function login(page, name = "部門長") {
   await expect(page.locator("#nav")).toBeVisible();
 }
 
+// PJを作る：PJ決めに種を出して、「個人PJとして進める」から始める（メンバーは自分だけ。毎回決めるMTG）
+async function makeProject(page, name) {
+  await page.goto("/#/projects");
+  await page.locator("[data-seed-box]").first().click();
+  await page.fill(".seed-post [name=title]", name);
+  await page.locator(".seed-post").getByRole("button", { name: "投稿する" }).click();
+  const card = page.locator(".seed-card", { hasText: name });
+  await card.locator(".card-menu summary").click();
+  await card.getByRole("button", { name: /個人PJとして進める/ }).click();
+  await card.getByRole("button", { name: "個人PJとして始める" }).click();
+  await confirm(page, "個人PJとして始める");
+  await expect(page.locator(".pj-header h1")).toHaveText(name);
+}
+
 // 確認画面のボタンを押す
 async function confirm(page, label) {
   await page.locator(".dialog").getByRole("button", { name: label }).click();
@@ -44,10 +58,7 @@ test("PJを作ってMTGをし、記録に残る", async ({ page }) => {
   const word = `検索語${stamp}`;
 
   // PJを作る（メンバーは自分だけ。毎回決めるMTG）
-  await page.goto("/#/projects/new");
-  await page.fill("#pj-form [name=name]", name);
-  await page.check("#pj-form [name=meeting_mode][value=adhoc]");
-  await page.getByRole("button", { name: "作成する" }).click();
+  await makeProject(page, name);
   await expect(page.locator(".pj-header h1")).toHaveText(name);
 
   // PJ画面から臨時のMTGを始める
@@ -91,10 +102,7 @@ test("PJを作ってMTGをし、記録に残る", async ({ page }) => {
 test("議事録は、通信が失敗しても書いた内容が保存される", async ({ page }) => {
   await login(page);
   const name = `保存テストPJ ${stamp}`;
-  await page.goto("/#/projects/new");
-  await page.fill("#pj-form [name=name]", name);
-  await page.check("#pj-form [name=meeting_mode][value=adhoc]");
-  await page.getByRole("button", { name: "作成する" }).click();
+  await makeProject(page, name);
   await page.locator(".pj-quick").getByRole("link", { name: /MTG/ }).click();
   await page.getByRole("button", { name: /臨時のMTG/ }).click();
   await page.getByRole("button", { name: "この内容で始める" }).click();
@@ -129,10 +137,7 @@ test("議事録は、通信が失敗しても書いた内容が保存される",
 test("議事録は、送れないまま閉じても開き直すと戻る", async ({ page }) => {
   await login(page);
   const name = `閉じるテストPJ ${stamp}`;
-  await page.goto("/#/projects/new");
-  await page.fill("#pj-form [name=name]", name);
-  await page.check("#pj-form [name=meeting_mode][value=adhoc]");
-  await page.getByRole("button", { name: "作成する" }).click();
+  await makeProject(page, name);
   await page.locator(".pj-quick").getByRole("link", { name: /MTG/ }).click();
   await page.getByRole("button", { name: /臨時のMTG/ }).click();
   await page.getByRole("button", { name: "この内容で始める" }).click();
@@ -165,10 +170,7 @@ test("議事録は、2人が同時に書いても両方残る", async ({ browser
   await login(a);
   await login(b);
   const name = `同時テストPJ ${stamp}`;
-  await a.goto("/#/projects/new");
-  await a.fill("#pj-form [name=name]", name);
-  await a.check("#pj-form [name=meeting_mode][value=adhoc]");
-  await a.getByRole("button", { name: "作成する" }).click();
+  await makeProject(a, name);
   await a.locator(".pj-quick").getByRole("link", { name: /MTG/ }).click();
   await a.getByRole("button", { name: /臨時のMTG/ }).click();
   await a.getByRole("button", { name: "この内容で始める" }).click();
@@ -203,10 +205,7 @@ test("議事録は、2人が同時に書いても両方残る", async ({ browser
 test("議事録の Shift+Enter の改行が残る", async ({ page }) => {
   await login(page);
   const name = `改行テストPJ ${stamp}`;
-  await page.goto("/#/projects/new");
-  await page.fill("#pj-form [name=name]", name);
-  await page.check("#pj-form [name=meeting_mode][value=adhoc]");
-  await page.getByRole("button", { name: "作成する" }).click();
+  await makeProject(page, name);
   await page.locator(".pj-quick").getByRole("link", { name: /MTG/ }).click();
   await page.getByRole("button", { name: /臨時のMTG/ }).click();
   await page.getByRole("button", { name: "この内容で始める" }).click();
@@ -250,4 +249,31 @@ test("開いた画面・メニューの切り替えで、読み込み中のま�
     await expect(page.locator("#app > .loading")).toHaveCount(0);
     await expect(page.locator("#app > *").first()).toBeVisible();
   }
+});
+
+test("一時中止したPJを、アーカイブ欄からPJ決めに入れ直す", async ({ page }) => {
+  const errors = watchErrors(page);
+  await login(page);
+  const name = `中止テストPJ ${stamp}`;
+  await makeProject(page, name);
+  // PJの編集で「一時中止（アーカイブ）」にする
+  await page.goto(page.url().replace(/#\/projects\/(\d+).*/, "#/projects/$1/edit"));
+  await page.selectOption("#pj-form [name=status]", "archived");
+  await page.getByRole("button", { name: "保存する" }).click();
+  await expect(page.locator(".pj-header .stage-pill")).toContainText("一時中止");
+  // PJ一覧に「＋ PJを作る」はない。アーカイブ欄に出て、PJ決めに入れられる
+  await page.goto("/#/projects");
+  await expect(page.getByRole("link", { name: "＋ PJを作る" })).toHaveCount(0);
+  await page.getByRole("tab", { name: "アーカイブ" }).click();
+  const row = page.locator(".list-item", { hasText: name });
+  await row.getByRole("button", { name: /PJ決めのアンケートに入れる/ }).click();
+  await confirm(page, "PJ決めに入れる");
+  await expect(row).toContainText("PJ決めに入っています");
+  // PJ決めの種になっていて、「前のPJ」として記録ごと戻せる
+  await page.locator("[data-seed-box]").first().click();
+  const card = page.locator(".seed-card", { hasText: name });
+  await card.locator(".card-menu summary").click();
+  await card.getByRole("button", { name: /個人PJとして進める/ }).click();
+  await expect(card.locator("[name=restore]")).toBeChecked();
+  expect(errors).toEqual([]);
 });

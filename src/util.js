@@ -125,6 +125,12 @@ export async function leaderIds(env) {
   return [...new Set([...(await headIds(env)), ...idList(env.ADMIN_IDS)])];
 }
 
+// 管理者全員（部門長・ADMIN_IDS・管理者メニューで足した人）。個人PJを始めたときのお知らせ先
+export async function adminIds(env) {
+  const { results } = await env.DB.prepare("SELECT user_id FROM admins").all();
+  return [...new Set([...(await leaderIds(env)), ...results.map((r) => r.user_id)])];
+}
+
 // 楽観ロック：更新件数が0なら、他の人が先に更新している
 export function assertUpdated(result, what = "この内容") {
   if (!result.meta || result.meta.changes === 0) {

@@ -25,7 +25,7 @@ export async function renderProject(el, id) {
     <nav class="breadcrumb"><a href="#/projects">PJ</a> / ${esc(p.name)}</nav>
     <div class="pj-header card">
       <div class="pj-header-main">
-        <span class="stage-pill">${esc(type.label)}${p.status === "done" ? "・完了" : ""}</span>
+        <span class="stage-pill">${esc(type.label)}${p.personal ? "・個人PJ" : ""}${p.status === "done" ? "・完了" : p.status === "archived" ? "・一時中止" : ""}</span>
         <h1>${esc(p.name)}</h1>
         ${p.description ? `<p class="desc fold">${esc(p.description)}</p>` : ""}
         <div class="people-stack">${data.members.map((m) => avatar(m)).join("")}<span class="more">${data.members.map((m) => `<a href="#/members/${encodeURIComponent(m.id)}">${esc(m.name)}</a>${m.id === p.pm_id ? '<span class="pm-tag">PM</span>' : ""}`).join("、")}</span></div>

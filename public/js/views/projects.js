@@ -9,35 +9,45 @@ export function openSeedBox(button) {
 }
 
 export async function renderProjects(el) {
-  const [{ projects }, { rounds }] = await Promise.all([api("/api/projects"), api("/api/rounds").catch(() => ({ rounds: [] }))]);
+  const [{ projects }, { rounds }] = await Promise.all([api("/api/projects?archived=1"), api("/api/rounds").catch(() => ({ rounds: [] }))]);
   // 赤ポチ：締め切りが決まっていて受付中のPJ決めがあるときだけ（締め切りなしの「次のPJ決め」はいつもあるので出さない）
   const open = rounds.find((r) => !r.archived && !r.closed && r.deadline);
 
   // 参加中のPJがない人（部門長など）は、進行中すべてから見せる
-  let filter = projects.some((p) => p.isMine) ? "mine" : "active";
+  let filter = projects.some((p) => p.isMine && p.status !== "archived") ? "mine" : "active";
   const stageName = (p) => state.types[p.type]?.stages.find((s) => s.no === p.current_stage)?.name || "";
 
   const draw = () => {
-    const list = projects.filter((p) => filter === "all" || (filter === "mine" ? p.isMine : p.status === filter));
+    // アーカイブ：完了したPJと、一時中止（アーカイブ）したPJ
+    const list = projects.filter((p) => filter === "archive" ? p.status !== "active"
+      : p.status !== "archived" && (filter === "mine" ? p.isMine : p.status === "active"));
     el.innerHTML = `
       <div class="page-heading">${viewSwitch("pj", { seedsOpen: Boolean(open) })}</div>
       <div class="board-tools">
         <div class="tabs" role="tablist">
-          ${[["mine", "参加中"], ["active", "進行中すべて（部門）"], ["done", "完了"], ["all", "すべて"]].map(([k, l]) =>
+          ${[["mine", "参加中"], ["active", "進行中すべて（部門）"], ["archive", "アーカイブ"]].map(([k, l]) =>
             `<button role="tab" aria-selected="${filter === k}" data-filter="${k}">${l}</button>`).join("")}
         </div>
-        <span class="row-left">${state.me.isAdmin ? `<a class="button" href="#/schedule">${ico("calendar")} 期日を設定する</a>` : ""}<button type="button" class="button" data-seed-box>${ico("sprout")} 政策の種を出す</button>
-          <a class="button primary" href="#/projects/new">＋ PJを作る</a></span>
+        <span class="row-left">${state.me.isAdmin ? `<a class="button" href="#/schedule">${ico("calendar")} 期日を設定する</a>` : ""}<button type="button" class="button primary" data-seed-box>${ico("sprout")} 政策の種を出す</button></span>
       </div>
-      ${list.length ? `<div class="card-grid">${list.map((p) => `
+      ${filter === "archive" ? archiveList(list) : list.length ? `<div class="card-grid">${list.map((p) => `
         <a class="card pj-card" href="#/projects/${p.id}">
-          <span class="stage-pill">${p.status === "done" ? "完了" : `工程${p.current_stage}・${esc(stageName(p))}`}</span>
+          <span class="stage-pill">${p.status === "done" ? "完了" : `工程${p.current_stage}・${esc(stageName(p))}`}${p.personal ? "・個人PJ" : ""}</span>
           ${p.status === "active" && p.completion_requested_at ? `<span class="due is-soon">完了の承認待ち</span>` : ""}
           <h3>${esc(p.name)}</h3>
           ${stageStepper(p, p.stages || [], { compact: true })}
         </a>`).join("")}</div>`
-        : `<div class="empty"><p>該当するPJはありません。</p></div>`}`;
+        : `<div class="empty"><p>該当するPJはありません。</p><p class="muted small">PJは、PJ決めの種から始めます（種の「⋯」→「個人PJとして進める」、または部門のPJ決め）。</p></div>`}`;
     el.querySelector("[data-seed-box]")?.addEventListener("click", (e) => openSeedBox(e.currentTarget));
+    // 一時中止したPJを、もう一度PJ決めのアンケートに入れる（記録はPJに残り、PJにするときに記録ごと戻せる）
+    el.querySelectorAll("[data-requeue]").forEach((b) => b.addEventListener("click", async () => {
+      const p = projects.find((x) => x.id === Number(b.dataset.requeue));
+      if (!await confirmDialog(`「${p.name}」を、もう一度PJ決めのアンケートに種として入れますか？
+
+議事録・タスクなどの記録は残ったままです。この種をまたPJにするとき、記録ごと戻せます。`, { ok: "PJ決めに入れる" })) return;
+      busy(b, () => api(`/api/projects/${p.id}/requeue`, { method: "POST", body: {} }))
+        .then((res) => { p.requeued = 1; toast(`「${res.round_title}」に種として入れました`); draw(); }).catch(() => {});
+    }));
     bindViewSwitch(el);
     el.querySelectorAll("[data-filter]").forEach((b) => b.addEventListener("click", () => {
       filter = b.dataset.filter;
@@ -47,7 +57,30 @@ export async function renderProjects(el) {
   draw();
 }
 
+// アーカイブ欄：完了したPJと、一時中止したPJ。一時中止したPJは、もう一度PJ決めに入れられる（PJメンバーと管理者）
+function archiveList(list) {
+  if (!list.length) return `<div class="empty"><p>アーカイブしたPJはありません。</p></div>`;
+  const row = (p) => `
+    <li class="list-item">
+      <span><a href="#/projects/${p.id}"><strong>${esc(p.name)}</strong></a>
+        <span class="muted small">${p.status === "done" ? "完了" : "一時中止"}${p.personal ? "・個人PJ" : ""}</span></span>
+      ${p.status === "archived" ? `<div class="meta">${p.requeued ? `<span class="muted small">${ico("check")} PJ決めに入っています</span>`
+        : state.me.isAdmin || p.isMine ? `<button type="button" class="small" data-requeue="${p.id}">${ico("ballot")} PJ決めのアンケートに入れる</button>` : ""}</div>` : ""}
+    </li>`;
+  const paused = list.filter((p) => p.status === "archived");
+  const done = list.filter((p) => p.status === "done");
+  return `${paused.length ? `<h2>一時中止</h2><ul class="list">${paused.map(row).join("")}</ul>` : ""}
+    ${done.length ? `<h2>完了</h2><ul class="list">${done.map(row).join("")}</ul>` : ""}`;
+}
+
 export async function renderProjectForm(el, id) {
+  // PJは、PJ決めの種から始める（ここから新しくは作らない）
+  if (!id) {
+    el.innerHTML = `<div class="empty"><p>PJは、PJ決めの種から始めます。</p>
+      <p class="muted small">種のカードの「⋯」→「個人PJとして進める」で、自分のPJとして始められます。</p>
+      <p><a class="button primary" href="#/seeds">${ico("sprout")} PJ決めを開く</a></p></div>`;
+    return;
+  }
   const data = id ? await api(`/api/projects/${id}`) : null;
   if (data && !data.canEdit) throw new Error("このPJを編集できるのは、PJメンバーと管理者です");
   const p = data?.project || {
@@ -143,7 +176,7 @@ export async function renderProjectForm(el, id) {
         <select name="status">
           <option value="active" ${p.status === "active" ? "selected" : ""}>進行中</option>
           <option value="done" ${p.status === "done" ? "selected" : ""}>完了</option>
-          ${state.me.isAdmin ? `<option value="archived" ${p.status === "archived" ? "selected" : ""}>アーカイブ（一覧から隠す）</option>` : ""}
+          ${state.me.isAdmin ? `<option value="archived" ${p.status === "archived" ? "selected" : ""}>一時中止（アーカイブ）</option>` : ""}
         </select></label>` : ""}
 
       <div class="form-actions">
