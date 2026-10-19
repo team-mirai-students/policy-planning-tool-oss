@@ -196,6 +196,7 @@ async function notionUser(env, userId) {
 export async function syncTeireiDayNotion(env, day, userId = null) {
   const row = await env.DB.prepare("SELECT * FROM dept_notice_days WHERE held_on = ?").bind(day).first();
   if (!row) return;
+  await adoptGenericReports(env, day);
   const [{ n }, slots] = await Promise.all([
     env.DB.prepare("SELECT COUNT(*) AS n FROM dept_meetings WHERE held_on < ?").bind(day).first(),
     upcomingSlots(env, 10),
@@ -271,7 +272,21 @@ async function reportTarget(env, day) {
   const meeting = await env.DB.prepare("SELECT id, held_on, ended_at FROM dept_meetings WHERE held_on = ?").bind(day).first();
   if (meeting) return { meeting, meetingId: meeting.id, heldOn: "" };
   if (day < teireiDay()) throw new HttpError(404, "その日の定例は見つかりません");
+  await adoptGenericReports(env, day);
   return { meeting: null, meetingId: 0, heldOn: day };
+}
+
+// 日を決めずに（「次の定例」に向けて）書いた進捗は、いちばん近い定例を選んだときに、その定例に向けたものとして引き継ぐ
+// （定例を選べるようにする前に書いた進捗が、選んだ定例の画面で空に見えないように。定例を始めたときと同じ行き先）
+async function adoptGenericReports(env, day) {
+  const open = await openMeeting(env);
+  if (open && open.held_on < day) return; // もっと近い定例がもう始まっている
+  const [slot] = await upcomingSlots(env, 1);
+  if (!slot || slot.starts_at.slice(0, 10) !== day) return;
+  await env.DB.prepare(
+    `UPDATE dept_reports SET held_on = ?1 WHERE dept_meeting_id IS NULL AND held_on = ''
+     AND project_id NOT IN (SELECT project_id FROM dept_reports WHERE dept_meeting_id IS NULL AND held_on = ?1)`
+  ).bind(day).run();
 }
 const dayParam = (v) => (v ? reqDate(v, "定例の日") : null);
 
