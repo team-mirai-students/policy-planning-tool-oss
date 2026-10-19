@@ -447,3 +447,38 @@ test("カレンダーの予定（MTG）を、詳細から削除できる", async
   expect(res).toBe(404);
   expect(errors).toEqual([]);
 });
+
+test("「戻る」で、保存したフォームや終えたMTGに戻らない・戻るボタンはどの画面でも同じ場所", async ({ page }) => {
+  const errors = watchErrors(page);
+  await login(page);
+  const name = `戻る先テストPJ ${stamp}`;
+  await makeProject(page, name);
+  const pjUrl = page.url();
+  // PJの編集を保存 → PJ画面。「戻る」で編集画面には戻らない
+  await page.goto(pjUrl.replace(/#\/projects\/(\d+).*/, "#/projects/$1/edit"));
+  await page.getByRole("button", { name: "保存する" }).click();
+  await expect(page.locator(".pj-header h1")).toHaveText(name);
+  await page.locator(".breadcrumb .back-btn").first().click();
+  await expect(page).not.toHaveURL(/\/edit/);
+  // MTGを始めて終える → PJ画面。「戻る」で終えたMTGには戻らない
+  await page.goto(pjUrl);
+  await page.locator(".pj-quick").getByRole("link", { name: /MTG/ }).click();
+  await page.getByRole("button", { name: /臨時のMTG/ }).click();
+  await page.getByRole("button", { name: "この内容で始める" }).click();
+  await expect(page.locator("#minutes-form")).toBeVisible();
+  await page.getByRole("button", { name: "MTGを終える" }).click();
+  await confirm(page, "MTGを終える");
+  await expect(page).toHaveURL(/#\/projects\/\d+/);
+  await page.locator(".breadcrumb .back-btn").first().click();
+  await expect(page).not.toHaveURL(/start=1/);
+  // 戻るボタンの高さは、パンくずのある画面とない画面で同じ
+  const top = async (hash) => {
+    await page.goto(`/${hash}`);
+    await expect(page.locator("#app > .loading")).toHaveCount(0);
+    return page.locator("#app .breadcrumb .back-btn").first().evaluate((b) => Math.round(b.getBoundingClientRect().top));
+  };
+  const a = await top("#/check");
+  expect(await top("#/notices")).toBe(a);
+  expect(await top("#/projects")).toBe(a);
+  expect(errors).toEqual([]);
+});

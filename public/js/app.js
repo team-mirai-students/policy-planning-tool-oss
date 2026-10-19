@@ -26,15 +26,15 @@ import { ico } from "./icons.js";
 
 const ROUTES = [
   [/^\/$/, "home", () => renderHome],
-  [/^\/start$/, "projects", () => renderStart],
+  [/^\/start$/, "home", () => renderStart],
   [/^\/check$/, "home", () => renderCheck],
   [/^\/notices$/, "home", () => renderNotices],
   [/^\/my-tasks$/, "home", () => renderMyTasks],
   [/^\/me$/, "me", () => renderProfile],
   [/^\/members\/([^/?]+)$/, "home", (m) => (el) => renderProfile(el, decodeURIComponent(m[1]))],
   [/^\/minutes-search$/, "home", () => renderMinutesSearch],
-  [/^\/present$/, "projects", () => renderPresentList],
-  [/^\/present\/(\d+)$/, "projects", (m) => (el) => renderPresent(el, Number(m[1]))],
+  [/^\/present$/, "home", () => renderPresentList],
+  [/^\/present\/(\d+)$/, "home", (m) => (el) => renderPresent(el, Number(m[1]))],
   [/^\/projects$/, "projects", () => renderProjects],
   [/^\/schedule$/, "projects", () => renderSchedule],
   [/^\/projects\/new$/, "projects", () => (el) => renderProjectForm(el, null)],
@@ -56,15 +56,15 @@ const ROUTES = [
   [/^\/teirei\/notice$/, "home", () => renderTeireiNotice],
   [/^\/teirei\/schedule$/, "home", () => renderTeireiSchedule],
   [/^\/teirei\/(\d+)$/, "home", (m) => (el) => renderTeirei(el, Number(m[1]))],
-  [/^\/report$/, "projects", () => renderReportList],
+  [/^\/report$/, "home", () => renderReportList],
   [/^\/teirei-event$/, "home", () => renderTeireiEvent],
   [/^\/other-meetings$/, "home", () => renderOtherList],
   [/^\/other-meetings\/(\d+)$/, "home", (m) => (el) => renderOtherMeeting(el, Number(m[1]))],
-  [/^\/report\/(\d+)$/, "projects", (m) => (el) => renderReport(el, Number(m[1]))],
+  [/^\/report\/(\d+)$/, "home", (m) => (el) => renderReport(el, Number(m[1]))],
   [/^\/sources$/, "home", () => (el) => renderSourcesView(el)],
-  [/^\/hearings$/, "projects", () => renderHearings],
-  [/^\/hearings\/new$/, "projects", () => renderHearingNew],
-  [/^\/hearings\/(\d+)$/, "projects", (m) => (el) => renderHearing(el, Number(m[1]))],
+  [/^\/hearings$/, "home", () => renderHearings],
+  [/^\/hearings\/new$/, "home", () => renderHearingNew],
+  [/^\/hearings\/(\d+)$/, "home", (m) => (el) => renderHearing(el, Number(m[1]))],
   [/^\/seeds\/(\d+)$/, "projects", (m) => (el) => renderRound(el, Number(m[1]))],
   [/^\/seeds\/(\d+)\/staffing$/, "projects", (m) => (el) => renderStaffing(el, Number(m[1]))],
 ];
@@ -171,9 +171,17 @@ function showLanding(session) {
 
 // 「戻る」のために、このタブで開いた画面の順番を覚えておく（ブラウザの履歴と同じ並び。保存はしない）
 const visited = [];
+window.__visited = visited; // lib.js の replaceHash が見る
 
 function trackHistory() {
   const hash = location.hash || "#/";
+  // replaceHash で置き換えたときは、覚えている最後の画面も置き換える
+  if (window.__replaceNav) {
+    window.__replaceNav = false;
+    if (visited.length) visited[visited.length - 1] = hash;
+    else visited.push(hash);
+    return;
+  }
   if (visited.length >= 2 && visited[visited.length - 2] === hash) visited.pop(); // 戻ってきた
   else if (visited[visited.length - 1] !== hash) visited.push(hash);
 }
@@ -264,12 +272,14 @@ function bindBellPanel() {
 // 画面の中身が描き直されるたびに（保存して再表示したときも）置き直す
 function placeBackButton(el) {
   const bar = document.getElementById("back-bar");
-  const crumb = el.querySelector(":scope > .breadcrumb");
-  if (!crumb) {
-    bar.hidden = (location.hash.replace(/^#/, "").split("?")[0] || "/") === "/";
-    return;
-  }
   bar.hidden = true;
+  let crumb = el.querySelector(":scope > .breadcrumb");
+  if (!crumb) {
+    if ((location.hash.replace(/^#/, "").split("?")[0] || "/") === "/") return;
+    crumb = document.createElement("nav");
+    crumb.className = "breadcrumb back-only";
+    el.prepend(crumb);
+  }
   if (crumb.querySelector(".back-btn")) return;
   const btn = document.getElementById("back-btn").cloneNode(true);
   btn.removeAttribute("id");
@@ -333,11 +343,15 @@ export async function route() {
   // 1つ前に見ていた画面へ戻ったときは「戻る」の切り替え（パッと）
   if (visited.length >= 2 && visited[visited.length - 2] === (location.hash || "#/")) pendingVt = "back";
   trackHistory();
-  document.getElementById("back-bar").hidden = path === "/";
+  // 戻るボタンは、描き終わったあとに見出しの上の行に置く（読み込み中に上の行を出すと、描き終わったときに中身が上下に動くので出さない）
+  document.getElementById("back-bar").hidden = true;
   for (const [re, nav, view] of ROUTES) {
     const m = path.match(re);
     if (!m) continue;
-    document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("is-active", a.dataset.nav === nav));
+    // 下のメニューの印：MTGの議事録は、始めた画面（ホーム・カレンダー）から来たらその印のまま（押すたびに印が飛ばないように）
+    const from = new URLSearchParams(location.hash.split("?")[1] || "").get("from");
+    const navNow = path.startsWith("/meetings/") && (from === "home" || from === "calendar") ? from : nav;
+    document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("is-active", a.dataset.nav === navNow));
     // 同じ画面のタブを切り替えただけなら、読み込み中に画面を空にせず、スクロールの位置もそのまま
     const sameScreen = shownPath === path;
     const keepY = window.scrollY;

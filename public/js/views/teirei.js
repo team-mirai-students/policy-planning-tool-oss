@@ -1,5 +1,5 @@
 // 部門の定例：入口（定例の議事録／進捗を書く／管理者は定例を始める）と、それぞれの画面
-import { api, esc, state, fmtDate, fmtDateTime, jstDateTime, addDays, hashQuery, confirmDialog, busy, toast, formData, pjPicker, pickItem, timerHtml, bindTimer, guardForm, markSaved, mergeText, autoSave, guardMeetingBack } from "../lib.js";
+import { api, esc, state, fmtDate, fmtDateTime, jstDateTime, addDays, hashQuery, confirmDialog, busy, toast, formData, pjPicker, pickItem, timerHtml, bindTimer, guardForm, markSaved, mergeText, autoSave, guardMeetingBack, replaceHash } from "../lib.js";
 import { enhanceRich, richHtml } from "../rich.js";
 import { FIXED, parseLayout, secTools, customSection, addSectionBox, bindLayout, layoutValue } from "../teirei-layout.js";
 import { ico, iconText } from "../icons.js";
@@ -510,6 +510,6 @@ export async function renderTeireiEvent(el) {
   form.addEventListener("submit", (e) => { e.preventDefault(); finish(e.submitter, () => toast("保存しました")); });
   form.querySelector("[data-end]")?.addEventListener("click", async (e) => {
     if (!await confirmDialog(`${label}のMTGを終えますか？\n\n書いた内容は、${fmtDate(d.day)}の定例の議事録に入ります。`, { ok: "MTGを終える" })) return;
-    finish(e.currentTarget, () => { toast("MTGを終えました。議事録は定例に入りました"); location.hash = d.meeting ? `#/teirei/${d.meeting.id}` : "#/"; });
+    finish(e.currentTarget, () => { toast("MTGを終えました。議事録は定例に入りました"); replaceHash(d.meeting ? `#/teirei/${d.meeting.id}` : "#/"); });
   });
 }

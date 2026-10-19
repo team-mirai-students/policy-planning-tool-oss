@@ -1520,3 +1520,7 @@ h1 .ico,h2 .ico,h3 .ico{color:var(--green)}
 /* 画面の切り替えでは動かさない（読み込みのあとにカードが下から出る動き・タブの切り替えのふわっとも、なし） */
 #app.entering .page-heading,#app.entering .card,#app.entering .choice,#app.entering .list-item,#app.entering .timeline > li{animation:none}
 #tab-body.tab-in{animation:none}
+
+/* 戻るボタンは、どの画面でも見出しの上の同じ場所に（2026-10-20）。中央寄せの見出しも、上の余白を左寄せの見出しとそろえる */
+.breadcrumb.back-only{margin:4px 0 12px}
+.page-heading{margin-top:8px}

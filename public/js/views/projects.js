@@ -1,5 +1,5 @@
 // PJ一覧と、PJの作成・編集フォーム
-import { api, esc, state, avatar, dueBadge, fmtDateTime, fmtDate, busy, formData, toast, confirmDialog, WEEK, addDays, nextMonday, stageStepper, guardForm, markSaved, bindMemberFilter, viewSwitch, bindViewSwitch } from "../lib.js";
+import { api, esc, state, avatar, dueBadge, fmtDateTime, fmtDate, busy, formData, toast, confirmDialog, WEEK, addDays, nextMonday, stageStepper, guardForm, markSaved, bindMemberFilter, viewSwitch, bindViewSwitch, replaceHash } from "../lib.js";
 import { ico } from "../icons.js";
 
 // 「政策の種を出す」：受付中のPJ決めを開いて、投稿欄を出す（受付中がなければ「次のPJ決め」ができる）
@@ -25,7 +25,7 @@ export async function renderProjects(el) {
       <div class="page-heading">${viewSwitch("pj", { seedsOpen: Boolean(open) })}</div>
       <div class="board-tools">
         <div class="tabs" role="tablist">
-          ${[["mine", "参加中"], ["active", "進行中すべて（部門）"], ["archive", "アーカイブ"]].map(([k, l]) =>
+          ${[["mine", "参加中"], ["active", "進行中（部門）"], ["archive", "アーカイブ"]].map(([k, l]) =>
             `<button role="tab" aria-selected="${filter === k}" data-filter="${k}">${l}</button>`).join("")}
         </div>
         <span class="row-left">${state.me.isAdmin ? `<a class="button" href="#/schedule">${ico("calendar")} 期日を設定する</a>` : ""}<button type="button" class="button primary" data-seed-box>${ico("sprout")} 政策の種を出す</button></span>
@@ -227,7 +227,7 @@ export async function renderProjectForm(el, id) {
       const res = await api(id ? `/api/projects/${id}` : "/api/projects", { method: id ? "PUT" : "POST", body });
       markSaved(form);
       toast(id ? "保存しました" : "PJを作成しました");
-      location.hash = `#/projects/${id || res.id}`;
+      replaceHash(`#/projects/${id || res.id}`);
     }).catch(() => {});
   });
 }

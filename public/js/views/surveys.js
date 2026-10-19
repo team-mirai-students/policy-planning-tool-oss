@@ -1,5 +1,5 @@
 // ホームのアンケート：管理者が追加（PJ決めアンケート／その他のアンケート）、みんなが答える、結果を見る
-import { api, esc, shareButton, state, avatar, busy, toast, confirmDialog, fmtDateTime, jstDateTime, celebrate } from "../lib.js";
+import { api, esc, shareButton, state, avatar, busy, toast, confirmDialog, fmtDateTime, jstDateTime, celebrate, replaceHash } from "../lib.js";
 import { ico } from "../icons.js";
 
 const METHODS = {
@@ -89,7 +89,7 @@ export async function renderSurveyNew(el) {
       options: [...form.querySelectorAll("[name=option]")].map((i) => i.value.trim()).filter(Boolean),
     };
     busy(e.submitter, () => api("/api/surveys", { method: "POST", body }))
-      .then((res) => { toast("アンケートをホームに出しました"); location.hash = `#/surveys/${res.id}`; }).catch(() => {});
+      .then((res) => { toast("アンケートをホームに出しました"); replaceHash(`#/surveys/${res.id}`); }).catch(() => {});
   });
 }
 const optionRow = () => `<div class="opt-row"><input name="option" maxlength="80" aria-label="選択肢"><button type="button" class="link-btn" data-del aria-label="この選択肢を消す">✕</button></div>`;
@@ -164,7 +164,7 @@ export async function renderSurvey(el, id) {
   el.querySelector("#delete-survey")?.addEventListener("click", async (e) => {
     if (!await confirmDialog("このアンケートを削除しますか？回答も消えます。")) return;
     busy(e.currentTarget, () => api(`/api/surveys/${id}`, { method: "DELETE" }))
-      .then(() => { toast("削除しました"); location.hash = "#/"; }).catch(() => {});
+      .then(() => { toast("削除しました"); replaceHash("#/"); }).catch(() => {});
   });
 }
 

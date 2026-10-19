@@ -1102,3 +1102,13 @@ export function guardMeetingBack(flush) {
     return true;
   });
 }
+
+// 履歴に積まずに、ほかの画面へ移る（いまの画面を置き換える）。MTGを終えた・フォームを保存した・消したあとに使い、
+// 「戻る」で終えたMTG（タイマーが動き出す）や保存済みのフォームに戻らないようにする
+export function replaceHash(hash) {
+  // 移る先が1つ前の画面なら（PJの画面 → 編集 → 保存 など）、戻るのと同じにする（同じ画面が履歴に2つ並ばないように）
+  const v = window.__visited || [];
+  if (v.length >= 2 && v[v.length - 2] === hash) { history.back(); return; }
+  window.__replaceNav = true;
+  location.replace(`${location.pathname}${location.search}${hash}`);
+}

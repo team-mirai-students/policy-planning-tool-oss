@@ -1,6 +1,6 @@
 // 議事録：前回の宿題（自動引き継ぎ）／話し合うこと／概要／キーワード／次回までにやること
 // 詳細なフィードバックはGoogleドキュメントに残す運用なので、入力欄は短くしている
-import { api, esc, state, fmtDateTime, fmtDate, busy, toast, memberOptions, dueBadge, addDays, embedUrl, membersFirst, copyForNotion, copyButton, bindCopyButtons, hashQuery, timerHtml, bindTimer, clearTimer, syncTimerStart, confirmDialog, guardPending, putUnsent, settleUnsent, restoreUnsent, setSaveAlert, saveAlertText, reportSaveTrouble, celebrateProgress, setProgressHint, skipButton, bindSkipButtons, assigneePicker, idsOf, forgetUnsaved, confirmTaskDone, doneEffect, guardMeetingBack } from "../lib.js";
+import { api, esc, state, fmtDateTime, fmtDate, busy, toast, memberOptions, dueBadge, addDays, embedUrl, membersFirst, copyForNotion, copyButton, bindCopyButtons, hashQuery, timerHtml, bindTimer, clearTimer, syncTimerStart, confirmDialog, guardPending, putUnsent, settleUnsent, restoreUnsent, setSaveAlert, saveAlertText, reportSaveTrouble, celebrateProgress, setProgressHint, skipButton, bindSkipButtons, assigneePicker, idsOf, forgetUnsaved, confirmTaskDone, doneEffect, guardMeetingBack, replaceHash } from "../lib.js";
 import { enhanceRich } from "../rich.js";
 import { schedulePollLinks } from "./schedule-poll.js";
 import { ico, iconText } from "../icons.js";
@@ -116,7 +116,7 @@ export async function renderMeeting(el, id) {
       forgetUnsaved(form);
       clearTimer(`meeting-${m.id}`);
       busy(e.currentTarget, () => api(`/api/meetings/${m.id}`, { method: "DELETE", body: { with_minutes: true } }))
-        .then(() => { toast("MTGを削除しました"); location.hash = `#/projects/${p.id}`; }).catch(() => {});
+        .then(() => { toast("MTGを削除しました"); replaceHash(`#/projects/${p.id}`); }).catch(() => {});
     });
   }
   // 下書き：次回の日程・MTGの進め方は、選ぶたびに残す（画面を移っても消えない。決まるのは「保存する」「決める」のとき）
@@ -557,7 +557,7 @@ export async function renderMeeting(el, id) {
       // 意見交換会：PJの記録に残ったことを知らせて、そのPJの記録へ
       if (ex) {
         toast("意見交換会を終えました。議事録はPJの記録に入りました");
-        location.hash = `#/projects/${p.id}?tab=records`;
+        replaceHash(`#/projects/${p.id}?tab=records`);
         return;
       }
       // このMTGでどれだけ進んだか：PJ全体の工程のチェックのうち、このMTGで済んだ分を「前 → 後」で見せる
@@ -585,7 +585,7 @@ export async function renderMeeting(el, id) {
         toast(next ? `MTGを終えました。${next}です` : "MTGを終えました。おつかれさまでした");
       }
       // 始めた画面へ戻る（ホームから始めたらホーム、カレンダーからならカレンダー、それ以外はPJ画面）
-      location.hash = from === "home" ? "#/" : from === "calendar" ? "#/calendar" : `#/projects/${p.id}`;
+      replaceHash(from === "home" ? "#/" : from === "calendar" ? "#/calendar" : `#/projects/${p.id}`);
     }).catch(() => {});
   });
 }

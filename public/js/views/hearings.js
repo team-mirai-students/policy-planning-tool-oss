@@ -1,5 +1,5 @@
 // 外部ヒアリングの申請：一覧（全員が見られる）／申請フォーム（必須は「誰に」「何のために」だけ）／詳細と承認
-import { api, esc, state, avatar, fmtDate, busy, toast, formData, hashQuery, jstDateTime, copyButton, bindCopyButtons, confirmDialog, guardForm, markSaved } from "../lib.js";
+import { api, esc, state, avatar, fmtDate, busy, toast, formData, hashQuery, jstDateTime, copyButton, bindCopyButtons, confirmDialog, guardForm, markSaved, replaceHash } from "../lib.js";
 
 const STEPS = [["pending", "申請中"], ["head_ok", "部門長確認済"], ["rep_ok", "代表確認済・スレッド作成"], ["done", "実施済"]];
 const STATUS_CLASS = { pending: "is-soon", head_ok: "is-soon", returned: "is-over", rep_ok: "", done: "", recorded: "", withdrawn: "" };
@@ -167,7 +167,7 @@ export async function renderHearingNew(el) {
     if (!await confirmDialog(needs ? "この内容で申請しますか？\n部門長にお知らせが届きます。" : "この内容で記録しますか？（承認は不要です）", { ok: needs ? "申請して知らせる" : "記録する" })) throw Object.assign(new Error("キャンセル"), { silent: true });
     const res = await api("/api/hearings", { method: "POST", body });
     toast(res.status === "recorded" ? "記録しました（承認不要）" : "申請しました。部門長に通知します");
-    location.hash = `#/hearings/${res.id}`;
+    replaceHash(`#/hearings/${res.id}`);
   });
 }
 

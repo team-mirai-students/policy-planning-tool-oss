@@ -1,5 +1,5 @@
 // 日程調整アンケート：候補の日時を並べて作る／○△× で答える／いちばん集まった日時に決める
-import { api, esc, shareButton, avatar, busy, toast, confirmDialog, fmtDateTime, state, addDays, celebrate } from "../lib.js";
+import { api, esc, shareButton, avatar, busy, toast, confirmDialog, fmtDateTime, state, addDays, celebrate, replaceHash } from "../lib.js";
 import { sendPollImage } from "../poll-image.js";
 import { ico } from "../icons.js";
 
@@ -48,7 +48,7 @@ export async function renderSchedulePollNew(el, projectId) {
     if (!await confirmDialog(`候補${slots.length}つで日程調整アンケートを作りますか？\nPJメンバーに「答えてください」のお知らせが届きます。`, { ok: "作って知らせる" })) return;
     busy(e.submitter, () => api(`/api/projects/${p.id}/schedule-polls`, { method: "POST",
       body: { slots, duration_min: f.duration_min.value, place: f.place.value, note: f.note.value } }))
-      .then((res) => { toast("日程調整アンケートを作りました"); location.hash = `#/schedule-polls/${res.id}`; }).catch(() => {});
+      .then((res) => { toast("日程調整アンケートを作りました"); replaceHash(`#/schedule-polls/${res.id}`); }).catch(() => {});
   });
 }
 const slotRow = (v) => `<div class="opt-row"><input type="datetime-local" value="${esc(v)}" aria-label="候補の日時"><button type="button" class="link-btn" data-del aria-label="この候補を消す">✕</button></div>`;

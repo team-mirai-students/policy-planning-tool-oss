@@ -1,6 +1,6 @@
 // その他のMTG（PJ・定例以外）：カテゴリー → プロジェクト（今あるものから選ぶ／新しく作る）→ 議事録（タイマーつき）
 // 議事録は、Notionの「その他」ページの「プロジェクト」欄の、そのプロジェクトのページの中に入る
-import { api, esc, fmtDate, fmtDateTime, jstDateTime, hashQuery, busy, toast, confirmDialog, timerHtml, bindTimer, guardForm, markSaved, mergeText, autoSave, pickItem, guardMeetingBack } from "../lib.js";
+import { api, esc, fmtDate, fmtDateTime, jstDateTime, hashQuery, busy, toast, confirmDialog, timerHtml, bindTimer, guardForm, markSaved, mergeText, autoSave, pickItem, guardMeetingBack, replaceHash } from "../lib.js";
 import { enhanceRich } from "../rich.js";
 import { ico } from "../icons.js";
 
@@ -77,7 +77,7 @@ export async function renderOtherMeeting(el, id) {
   el.querySelector("#delete-other")?.addEventListener("click", async (e) => {
     if (!await confirmDialog(`${m.group_name}の${fmtDateTime(m.starts_at)}のMTGを削除しますか？\n\n議事録も消え、ツールからは元に戻せません（Notionの議事録ページは、Notionのゴミ箱に移ります）。`, { ok: "削除する" })) return;
     busy(e.currentTarget, () => api(`/api/other-meetings/${m.id}`, { method: "DELETE", body: {} }))
-      .then(() => { markSaved(form); toast("削除しました"); location.hash = "#/other-meetings"; }).catch(() => {});
+      .then(() => { markSaved(form); toast("削除しました"); replaceHash("#/other-meetings"); }).catch(() => {});
   });
   const form = el.querySelector("#other-form");
   guardForm(form);
@@ -105,7 +105,7 @@ export async function renderOtherMeeting(el, id) {
   form.addEventListener("submit", (e) => { e.preventDefault(); finish(e.submitter, false, () => toast("保存しました。Notionにも入ります")); });
   form.querySelector("[data-end]")?.addEventListener("click", async (e) => {
     if (!await confirmDialog("MTGを終えますか？\n\n議事録は、Notionのこのプロジェクトのページにも入ります。", { ok: "MTGを終える" })) return;
-    finish(e.currentTarget, true, () => { toast("MTGを終えました"); location.hash = `#/other-meetings/${m.id}`; });
+    finish(e.currentTarget, true, () => { toast("MTGを終えました"); replaceHash(`#/other-meetings/${m.id}`); });
   });
 }
 
