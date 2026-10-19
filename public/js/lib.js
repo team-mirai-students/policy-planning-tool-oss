@@ -1077,3 +1077,28 @@ export function doneEffect(cb) {
     if (all.length >= 1 && left === 0) setTimeout(() => celebrate("担当中のタスクを全部済ませました！", "おつかれさまでした 🎉"), 350);
   }
 }
+
+// ---------- 「戻る」を押したときの確認（MTG中の議事録など） ----------
+// その画面にいるあいだだけ効く。fn が false を返したら戻らない
+let backGuard = null;
+export function setBackGuard(fn) {
+  backGuard = fn ? { hash: location.hash, fn } : null;
+}
+export async function checkBackGuard() {
+  if (!backGuard || backGuard.hash !== location.hash) return true;
+  return backGuard.fn();
+}
+// MTG中：「このMTGを一時保存して戻りますか？」→ はい：書いた内容を保存してから戻る
+export function guardMeetingBack(flush) {
+  setBackGuard(async () => {
+    if (!await confirmDialog("このMTGを一時保存して戻りますか？\n\n書いた内容は保存されます。続きは「ミーティングを始める」の「前回の続き（再開）」や、議事録の画面から書けます。", { ok: "一時保存して戻る" })) return false;
+    try {
+      await flush();
+    } catch {
+      toast("保存できませんでした。通信を確かめて、もう一度押してください（書いた内容はこの端末に残っています）", "error");
+      return false;
+    }
+    toast("一時保存しました");
+    return true;
+  });
+}

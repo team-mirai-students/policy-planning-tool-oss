@@ -1,5 +1,5 @@
 // 起動・ログイン状態・ハッシュルーティング
-import { api, esc, avatar, toast, state, hasUnsaved, forgetUnsaved, flushPending, confirmDialog, fmtDateTime, jstDateTime, prefetch, burst, plusOne, celebrate, doneEffect } from "./lib.js";
+import { api, esc, avatar, toast, state, hasUnsaved, forgetUnsaved, flushPending, confirmDialog, fmtDateTime, jstDateTime, prefetch, burst, plusOne, celebrate, doneEffect, checkBackGuard } from "./lib.js";
 import { renderHome } from "./views/home.js";
 import { renderSurvey, renderSurveyNew, renderSurveyList } from "./views/surveys.js";
 import { renderSchedulePoll, renderSchedulePollNew } from "./views/schedule-poll.js";
@@ -178,7 +178,9 @@ function trackHistory() {
   else if (visited[visited.length - 1] !== hash) visited.push(hash);
 }
 
-function goBack() {
+async function goBack() {
+  // MTG中などは、確認してから（一時保存して）戻る
+  if (!(await checkBackGuard())) return;
   if (visited.length > 1) {
     history.back();
     return;

@@ -1,5 +1,5 @@
 // 部門の定例：入口（定例の議事録／進捗を書く／管理者は定例を始める）と、それぞれの画面
-import { api, esc, state, fmtDate, fmtDateTime, jstDateTime, addDays, hashQuery, confirmDialog, busy, toast, formData, pjPicker, pickItem, timerHtml, bindTimer, guardForm, markSaved, mergeText, autoSave } from "../lib.js";
+import { api, esc, state, fmtDate, fmtDateTime, jstDateTime, addDays, hashQuery, confirmDialog, busy, toast, formData, pjPicker, pickItem, timerHtml, bindTimer, guardForm, markSaved, mergeText, autoSave, guardMeetingBack } from "../lib.js";
 import { enhanceRich, richHtml } from "../rich.js";
 import { FIXED, parseLayout, secTools, customSection, addSectionBox, bindLayout, layoutValue } from "../teirei-layout.js";
 import { ico, iconText } from "../icons.js";
@@ -501,6 +501,7 @@ export async function renderTeireiEvent(el) {
     })
     .then((res) => { version = res.version; base = form.text.value; return res; });
   const auto = autoSave(form, saveNow, { status: el.querySelector("#auto-status"), key: `event:${d.day}:${d.event}`, label });
+  if (inMeeting) guardMeetingBack(async () => { if (auto.pending()) await auto.flush(); await saveNow(); });
   const finish = async (button, done) => {
     if (auto.pending()) await auto.flush();
     busy(button, () => { sync = true; return saveNow().finally(() => { sync = false; }); })

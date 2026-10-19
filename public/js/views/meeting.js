@@ -1,6 +1,6 @@
 // 議事録：前回の宿題（自動引き継ぎ）／話し合うこと／概要／キーワード／次回までにやること
 // 詳細なフィードバックはGoogleドキュメントに残す運用なので、入力欄は短くしている
-import { api, esc, state, fmtDateTime, fmtDate, busy, toast, memberOptions, dueBadge, addDays, embedUrl, membersFirst, copyForNotion, copyButton, bindCopyButtons, hashQuery, timerHtml, bindTimer, clearTimer, syncTimerStart, confirmDialog, guardPending, putUnsent, settleUnsent, restoreUnsent, setSaveAlert, saveAlertText, reportSaveTrouble, celebrateProgress, setProgressHint, skipButton, bindSkipButtons, assigneePicker, idsOf, forgetUnsaved, confirmTaskDone, doneEffect } from "../lib.js";
+import { api, esc, state, fmtDateTime, fmtDate, busy, toast, memberOptions, dueBadge, addDays, embedUrl, membersFirst, copyForNotion, copyButton, bindCopyButtons, hashQuery, timerHtml, bindTimer, clearTimer, syncTimerStart, confirmDialog, guardPending, putUnsent, settleUnsent, restoreUnsent, setSaveAlert, saveAlertText, reportSaveTrouble, celebrateProgress, setProgressHint, skipButton, bindSkipButtons, assigneePicker, idsOf, forgetUnsaved, confirmTaskDone, doneEffect, guardMeetingBack } from "../lib.js";
 import { enhanceRich } from "../rich.js";
 import { schedulePollLinks } from "./schedule-poll.js";
 import { ico, iconText } from "../icons.js";
@@ -332,6 +332,8 @@ export async function renderMeeting(el, id) {
   }
   const alertId = `meeting-${m.id}`;
   const flushAll = (opts) => Promise.all(["agenda", "summary", "todos"].map((f) => saveField(f, opts)));
+  // MTG中に「戻る」を押したら、一時保存して戻るか確かめる
+  if (inMeeting && canEdit) guardMeetingBack(() => flushAll());
   // ほかの画面へ移るとき：書きかけをすぐ保存する（保存は画面を移っても続く。失敗したら知らせる）
   const pending = () => live.dirty.size > 0 || live.inflight.size > 0;
   window.addEventListener("hashchange", () => { if (live.dirty.size) flushAll().catch(() => {}); }, { once: true });

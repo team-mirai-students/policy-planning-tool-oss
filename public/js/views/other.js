@@ -1,6 +1,6 @@
 // その他のMTG（PJ・定例以外）：カテゴリー → プロジェクト（今あるものから選ぶ／新しく作る）→ 議事録（タイマーつき）
 // 議事録は、Notionの「その他」ページの「プロジェクト」欄の、そのプロジェクトのページの中に入る
-import { api, esc, fmtDate, fmtDateTime, jstDateTime, hashQuery, busy, toast, confirmDialog, timerHtml, bindTimer, guardForm, markSaved, mergeText, autoSave, pickItem } from "../lib.js";
+import { api, esc, fmtDate, fmtDateTime, jstDateTime, hashQuery, busy, toast, confirmDialog, timerHtml, bindTimer, guardForm, markSaved, mergeText, autoSave, pickItem, guardMeetingBack } from "../lib.js";
 import { enhanceRich } from "../rich.js";
 import { ico } from "../icons.js";
 
@@ -90,6 +90,7 @@ export async function renderOtherMeeting(el, id) {
     })
     .then((res) => { version = res.version; base = form.body.value; return res; });
   const auto = autoSave(form, saveNow, { status: el.querySelector("#auto-status"), key: `other:${m.id}`, label: "議事録" });
+  if (inMeeting) guardMeetingBack(async () => { if (auto.pending()) await auto.flush(); await saveNow(); });
   const finish = async (button, ending, done) => {
     if (auto.pending()) await auto.flush();
     busy(button, () => { sync = true; end = ending; return saveNow().finally(() => { sync = false; end = false; }); })

@@ -399,3 +399,29 @@ test("意見交換会：PJのメンバーでない人も、議事録を書いて
   await expect(b.locator(".search-results")).toContainText("メンバー外の意見");
   expect(errors).toEqual([]);
 });
+
+test("MTG中に「戻る」を押すと、一時保存して戻るか確かめる", async ({ page }) => {
+  const errors = watchErrors(page);
+  await login(page);
+  const name = `戻るテストPJ ${stamp}`;
+  await makeProject(page, name);
+  await page.locator(".pj-quick").getByRole("link", { name: /MTG/ }).click();
+  await page.getByRole("button", { name: /臨時のMTG/ }).click();
+  await page.getByRole("button", { name: "この内容で始める" }).click();
+  await expect(page.locator("#minutes-form")).toBeVisible();
+  const id = page.url().match(/meetings\/(\d+)/)[1];
+  await page.locator('.rich-editor[data-field="summary"]').click();
+  await page.keyboard.type("戻る前に書いた");
+  // キャンセルなら、そのまま残る
+  await page.locator(".breadcrumb .back-btn").click();
+  await expect(page.locator(".dialog")).toContainText("このMTGを一時保存して戻りますか？");
+  await page.locator(".dialog").getByRole("button", { name: "キャンセル" }).click();
+  await expect(page).toHaveURL(new RegExp(`meetings/${id}`));
+  // 一時保存して戻る
+  await page.locator(".breadcrumb .back-btn").click();
+  await confirm(page, "一時保存して戻る");
+  await expect(page).not.toHaveURL(new RegExp(`meetings/${id}`));
+  const saved = await page.evaluate((i) => fetch(`/api/meetings/${i}`).then((r) => r.json()), id);
+  expect(saved.minute.summary).toContain("戻る前に書いた");
+  expect(errors).toEqual([]);
+});
