@@ -256,12 +256,14 @@ export async function renderTeirei(el, id) {
 }
 
 // ---------- どの定例か選ぶ（進捗を書く・定例イベントのMTG）：最近の定例・今日の定例・これからの定例 ----------
-export const teireiTargetLabel = (t) => `${t.meeting?.number ? `第${t.meeting.number}回 ` : ""}${fmtDate(t.day)}${t.starts_at ? ` ${t.starts_at.slice(11, 16)}` : ""}の定例`;
+export const teireiTargetLabel = (t) => `${t.number ? `第${t.number}回 ` : ""}${fmtDate(t.day)}${t.starts_at ? ` ${t.starts_at.slice(11, 16)}` : ""}の定例`;
 export function teireiTargetList(targets, suggested, href, today) {
   if (!targets.length) return `<p class="muted small">定例の予定がありません。部門長・副部門長が「定例」→「定例を予定する」から登録できます。</p>`;
   return `<ul class="pick-list">${targets.map((t) => pickItem({
     href: href(t), name: teireiTargetLabel(t),
-    note: `${t.day === today ? `<span class="tag">今日</span>` : ""}${t.day === suggested ? `<span class="tag">次の定例</span>` : ""}${stateTag(t.meeting)}`,
+    // 印は1つだけ：終了／進行中／今日／予定
+    note: t.meeting?.ended_at ? `<span class="tag">終了</span>` : t.meeting?.is_open ? `<span class="due is-soon">進行中</span>`
+      : t.day === today ? `<span class="tag">今日</span>` : `<span class="tag">予定</span>`,
   })).join("")}</ul>`;
 }
 

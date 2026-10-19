@@ -38,6 +38,8 @@ test("「次の定例」に向けて書いた進捗は、いちばん近い定�
   DB.raw.exec("INSERT INTO dept_reports (project_id, dept_meeting_id, done, next, issues, updated_at, version) VALUES (1, NULL, '昨日書いた', '次', '困り', 0, 38)");
   const { suggested, targets } = await call("GET", "/api/teirei-targets")({ env, user, url: new URL("http://x/") });
   assert.ok(suggested);
+  // どの回にも第◯回が付き、近い順に1つずつ増える
+  assert.deepEqual(targets.map((t) => t.number), targets.map((_, i) => i + 1));
   const get = (day) => call("GET", "/api/projects/:id/dept-report")({ env, user, params: { id: 1 }, url: new URL(`http://x/?day=${day}`) });
   const near = await get(suggested);
   assert.equal(near.report.done, "昨日書いた");

@@ -259,6 +259,12 @@ async function listTeireiTargets({ env }) {
     byDay.set(m.held_on, { day: m.held_on, starts_at: m.starts_at || byDay.get(m.held_on)?.starts_at || "", meeting: { ...withState(m, today), number: m.number } });
   }
   const targets = [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+  // まだ作っていない定例にも第◯回を付ける（その日より前の定例＝作ってある定例と、予定でまだ作っていない定例の数から数える）
+  for (const t of targets) {
+    if (t.meeting) { t.number = t.meeting.number; continue; }
+    const { n } = await env.DB.prepare("SELECT COUNT(*) AS n FROM dept_meetings WHERE held_on < ?").bind(t.day).first();
+    t.number = n + targets.filter((x) => !x.meeting && x.day >= today && x.day < t.day).length + firstNumber(env);
+  }
   // 初めに選んでおくもの：今日かこれからの、いちばん近い定例
   return { today, targets, suggested: targets.find((t) => t.day >= today)?.day || null };
 }
