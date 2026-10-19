@@ -97,11 +97,12 @@ async function getCalendar({ env, url, user }) {
     db.prepare(
       `SELECT m.id, m.starts_at, m.duration_min, m.place, m.kind, p.id AS project_id, p.name AS project_name,
               p.meeting_mode, p.meeting_weekdays, p.meeting_interval, p.meeting_duration, p.meeting_place,
-              EXISTS (SELECT 1 FROM minutes n WHERE n.meeting_id = m.id) AS has_minutes
+              EXISTS (SELECT 1 FROM minutes n WHERE n.meeting_id = m.id) AS has_minutes,
+              (?4 OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_id = ?3)) AS can_edit
        FROM meetings m JOIN projects p ON p.id = m.project_id
        WHERE m.cancelled = 0 AND m.starts_at >= ?1 AND m.starts_at < ?2 AND p.status != 'archived' ${pjFilter}
        ORDER BY m.starts_at`
-    ).bind(`${from}T00:00`, `${addDays(to, 1)}T00:00`, user.id).all(),
+    ).bind(`${from}T00:00`, `${addDays(to, 1)}T00:00`, user.id, user.isAdmin ? 1 : 0).all(),
     db.prepare(
       `SELECT t.id, t.title, t.status, t.due_date, t.assignee_id, ${ASSIGNEE_COLUMNS}, p.id AS project_id, p.name AS project_name
        FROM tasks t JOIN projects p ON p.id = t.project_id
@@ -116,11 +117,12 @@ async function getCalendar({ env, url, user }) {
        ORDER BY s.due_date`
     ).bind(from, to, user.id).all(),
     db.prepare(
-      `SELECT r.id, r.starts_at, r.duration_min, r.place, p.id AS project_id, p.name AS project_name
+      `SELECT r.id, r.starts_at, r.duration_min, r.place, p.id AS project_id, p.name AS project_name,
+              (?4 OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_id = ?3)) AS can_edit
        FROM rehearsals r JOIN projects p ON p.id = r.project_id
        WHERE r.starts_at >= ?1 AND r.starts_at < ?2 AND p.status != 'archived' ${pjFilter}
        ORDER BY r.starts_at`
-    ).bind(`${from}T00:00`, `${addDays(to, 1)}T00:00`, user.id).all(),
+    ).bind(`${from}T00:00`, `${addDays(to, 1)}T00:00`, user.id, user.isAdmin ? 1 : 0).all(),
     // 部門の定例は全員が出るので、「自分の予定」でも出す
     teireiEvents(env, from, to),
   ]);

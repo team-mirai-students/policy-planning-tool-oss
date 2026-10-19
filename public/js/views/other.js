@@ -53,7 +53,7 @@ export async function renderOtherStart(el) {
 // その他のMTGの議事録（start=1 のときだけタイマーと「MTGを終える」）
 export async function renderOtherMeeting(el, id) {
   const inMeeting = hashQuery().get("start") === "1";
-  const { meeting: m } = await api(`/api/other-meetings/${id}`);
+  const { meeting: m, canDelete } = await api(`/api/other-meetings/${id}`);
   let version = m.version;
   let base = m.body;
   let sync = false;
@@ -71,8 +71,14 @@ export async function renderOtherMeeting(el, id) {
         ${inMeeting ? `<button type="button" class="primary" data-end>MTGを終える</button>` : `<button class="primary">保存する</button>`}
       </div>
     </form>`;
+  if (canDelete) el.insertAdjacentHTML("beforeend", `<p class="danger-zone"><button type="button" class="link-btn danger" id="delete-other">${ico("trash")} このMTGを削除する</button></p>`);
   enhanceRich(el);
   if (inMeeting) bindTimer(el, `other-${m.id}`, { auto: true });
+  el.querySelector("#delete-other")?.addEventListener("click", async (e) => {
+    if (!await confirmDialog(`${m.group_name}の${fmtDateTime(m.starts_at)}のMTGを削除しますか？\n\n議事録も消え、ツールからは元に戻せません（Notionの議事録ページは、Notionのゴミ箱に移ります）。`, { ok: "削除する" })) return;
+    busy(e.currentTarget, () => api(`/api/other-meetings/${m.id}`, { method: "DELETE", body: {} }))
+      .then(() => { markSaved(form); toast("削除しました"); location.hash = "#/other-meetings"; }).catch(() => {});
+  });
   const form = el.querySelector("#other-form");
   guardForm(form);
   let end = false;

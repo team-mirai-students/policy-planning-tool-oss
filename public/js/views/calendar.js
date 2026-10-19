@@ -1,7 +1,5 @@
 // カレンダー：MTG・リハーサル・タスクの期限・工程の期限を、月／週／3日／1日／スケジュールで表示する（表示は手動で切り替え）
-import {
-  api, esc, state, fmtDate, todayStr, addDays, WEEK, gcalEventUrl, gcalAllDayUrl, gcalLink, gcalChoice, weeklyRrule, doneTasksToggle, bindDoneTasksToggle, TASK_STATUS,
-} from "../lib.js";
+import { api, esc, state, fmtDate, todayStr, addDays, WEEK, gcalEventUrl, gcalAllDayUrl, gcalLink, gcalChoice, weeklyRrule, doneTasksToggle, bindDoneTasksToggle, TASK_STATUS, confirmDialog, busy, toast, fmtDateTime, jstDateTime } from "../lib.js";
 import { ico, iconText } from "../icons.js";
 
 // 画面を開いているあいだだけ覚えておく（ブラウザには保存しない）
@@ -71,7 +69,11 @@ function collect(data) {
   };
   for (const m of data.meetings) {
     push(m.starts_at.slice(0, 10), {
-      ...timed(m, "meeting", m.project_name), sub: "MTG", kindLabel: "MTG", href: `#/meetings/${m.id}?from=calendar`,
+      ...timed(m, "meeting", m.project_name), sub: m.kind === "exchange" ? "意見交換会" : "MTG", kindLabel: m.kind === "exchange" ? "意見交換会" : "MTG", href: `#/meetings/${m.id}?from=calendar`,
+      // 消す：議事録があれば議事録ごと（「確認する → ゴミ箱」に30日残り、戻せる）。定例の回は中止になる
+      del: m.can_edit ? { url: `/api/meetings/${m.id}`, body: { with_minutes: true },
+        message: `${m.project_name}の${fmtDateTime(m.starts_at)}の${m.kind === "exchange" ? "意見交換会" : "MTG"}を削除しますか？${m.has_minutes ? "\n\n議事録と、そこで作ったタスクも消えます。" : ""}\n「確認する → ゴミ箱」に30日残り、元に戻せます。${m.starts_at > nowStr() ? "\nこれからのMTGなので、PJメンバーにお知らせが届きます。" : ""}`,
+        ok: m.kind === "regular" ? "この回を中止する" : "削除する" } : null,
       project: m.project_name, projectHref: `#/projects/${m.project_id}`,
       rows: [["議事録", m.has_minutes ? "記入済み" : "まだ書かれていません"]],
       // 今日以降は「MTGを始める」、過ぎたMTGは「議事録を書く」。「議事録を見る」は読むだけ（話すことは事前に書ける）
@@ -99,6 +101,7 @@ function collect(data) {
     push(r.starts_at.slice(0, 10), {
       ...timed(r, "rehearsal", `リハーサル：${r.project_name}`), kindLabel: "発表リハーサル", href: `#/projects/${r.project_id}?tab=present`,
       project: r.project_name, projectHref: `#/projects/${r.project_id}`, rows: [], open: "発表準備を開く",
+      del: r.can_edit ? { url: `/api/rehearsals/${r.id}`, body: {}, message: `${r.project_name}の${fmtDateTime(r.starts_at)}のリハーサルを削除しますか？`, ok: "削除する" } : null,
       gcal: gcalEventUrl({ title: `${r.project_name} 発表リハーサル`, start: r.starts_at, durationMin: r.duration_min, location: r.place }),
     });
   }
@@ -183,7 +186,7 @@ export async function renderCalendar(el) {
     if (!a) return;
     e.preventDefault();
     e.stopPropagation();
-    showDetail(events[Number(a.dataset.ev)]);
+    showDetail(events[Number(a.dataset.ev)], () => renderCalendar(el));
   });
   // 日付を押すと、その日の1日表示へ
   el.querySelectorAll("[data-day]").forEach((b) => b.addEventListener("click", (e) => {
@@ -297,7 +300,7 @@ function scheduleView(days, byDay, today) {
 }
 
 // ---------- 予定の詳細（スマホでは下から出るシート） ----------
-function showDetail(e) {
+function showDetail(e, reload) {
   if (!e) return;
   const when = e.timed ? `${fmtDate(e.date)} ${hhmm(e.start)}〜${hhmm(e.end)}` : `${fmtDate(e.date)}（終日）`;
   const rows = [
@@ -319,6 +322,7 @@ function showDetail(e) {
         ${e.project ? `<dt>PJ</dt><dd><a href="${e.projectHref}" data-go>${esc(e.project)}</a></dd>` : ""}
       </dl>
       <div class="form-actions">
+        ${e.del ? `<button type="button" class="link-btn danger" data-del>${ico("trash")} 削除</button>` : ""}
         ${gcalChoice(e.gcal, e.gcalSeries)}
         <span class="row-left">
           ${e.view ? `<a class="button" href="${e.view}" data-go>${ico("doc")} 議事録を見る</a>` : ""}
@@ -332,4 +336,12 @@ function showDetail(e) {
   document.addEventListener("keydown", onKey);
   document.body.append(back);
   back.querySelector("[data-go]").focus();
+  back.querySelector("[data-del]")?.addEventListener("click", async (ev) => {
+    if (!await confirmDialog(e.del.message, { ok: e.del.ok })) return;
+    busy(ev.currentTarget, () => api(e.del.url, { method: "DELETE", body: e.del.body }))
+      .then(() => { close(); toast("削除しました"); reload(); }).catch(() => {});
+  });
 }
+
+// 今の日本時間（'YYYY-MM-DDTHH:MM'）
+function nowStr() { return jstDateTime(Date.now()); }

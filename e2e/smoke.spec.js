@@ -425,3 +425,25 @@ test("MTG中に「戻る」を押すと、一時保存して戻るか確かめ�
   expect(saved.minute.summary).toContain("戻る前に書いた");
   expect(errors).toEqual([]);
 });
+
+test("カレンダーの予定（MTG）を、詳細から削除できる", async ({ page }) => {
+  const errors = watchErrors(page);
+  await login(page);
+  const name = `カレンダー削除PJ ${stamp}`;
+  await makeProject(page, name);
+  await page.locator(".pj-quick").getByRole("link", { name: /MTG/ }).click();
+  await page.getByRole("button", { name: /臨時のMTG/ }).click();
+  await page.getByRole("button", { name: "この内容で始める" }).click();
+  await expect(page.locator("#minutes-form")).toBeVisible();
+  const id = page.url().match(/meetings\/(\d+)/)[1];
+  await page.goto("/#/calendar");
+  // 今日の1日表示（月の表示では、予定が多いと隠れる）
+  await page.locator(".cal-cell.is-today").click({ position: { x: 4, y: 4 } });
+  await page.locator(`[data-ev]`, { hasText: name }).first().click();
+  await page.locator(".ev-detail [data-del]").click();
+  await confirm(page, "削除する");
+  await expect(page.locator(".toast")).toContainText("削除しました");
+  const res = await page.evaluate((i) => fetch(`/api/meetings/${i}`).then((r) => r.status), id);
+  expect(res).toBe(404);
+  expect(errors).toEqual([]);
+});

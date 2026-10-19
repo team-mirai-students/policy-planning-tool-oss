@@ -107,7 +107,7 @@ export async function renderMeeting(el, id) {
   // 初回のMTG：決めること（PM・MTGの進め方・次回・最初のアクション）
   if (data.isFirst && canEdit && !viewOnly && !ex) bindFirstMeeting(el, data, p);
   // このMTGを削除する（間違えて開いた・二重に始めたとき）。議事録とタスクも消える
-  if (canEdit) {
+  if (data.canDelete) {
     el.insertAdjacentHTML("beforeend", `<p class="danger-zone"><button type="button" class="link-btn danger" id="delete-mtg">${ico("trash")} このMTGを削除する</button></p>`);
     el.querySelector("#delete-mtg").addEventListener("click", async (e) => {
       const n = todos.filter((t) => t.id).length;

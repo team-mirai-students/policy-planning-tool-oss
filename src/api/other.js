@@ -2,7 +2,7 @@
 // 議事録は、Notionの「その他」ページの「プロジェクト」欄に作ったプロジェクトのページの中へ、1回ずつページとして入る
 import { HttpError, readJson, required, int, longText, reqDateTime, assertUpdated } from "../util.js";
 import { requireAdmin } from "./common.js";
-import { notionConfigured, notionPageId, teireiPeopleColumns, findOtherParent, createGroupPage, createNotionPage, replaceNotionPage, noteBlocks } from "../notion.js";
+import { notionConfigured, notionPageId, teireiPeopleColumns, findOtherParent, createGroupPage, createNotionPage, replaceNotionPage, noteBlocks, setNotionArchived } from "../notion.js";
 
 export const routes = [
   ["GET", "/api/other-groups", listGroups],
@@ -11,6 +11,7 @@ export const routes = [
   ["GET", "/api/other-meetings", listMeetings],
   ["GET", "/api/other-meetings/:id", getMeeting],
   ["PUT", "/api/other-meetings/:id", saveMeeting],
+  ["DELETE", "/api/other-meetings/:id", deleteMeeting],
   ["GET", "/api/admin/notion-check", checkNotion],
 ];
 
@@ -80,11 +81,11 @@ async function listMeetings({ env }) {
   return { meetings: results.map(({ body, ...m }) => ({ ...m, has_minutes: Boolean(body.trim()) })) };
 }
 
-async function getMeeting({ env, params }) {
+async function getMeeting({ env, user, params }) {
   const m = await env.DB.prepare(`${MEETING_SQL} WHERE m.id = ?`).bind(params.id).first();
   if (!m) throw new HttpError(404, "MTGが見つかりません");
   const c = CATEGORIES.find((x) => x.key === m.category);
-  return { meeting: { ...m, category_label: c?.label || "" } };
+  return { meeting: { ...m, category_label: c?.label || "" }, canDelete: Boolean(user.isAdmin || m.created_by === user.id) };
 }
 
 // 保存（自動保存も）。sync: true（「保存する」「MTGを終える」）のとき、Notionにも入れる。end: true で「MTGを終える」
@@ -102,6 +103,16 @@ async function saveMeeting({ request, env, user, params, ctx }) {
   const g = await loadGroup(env, cur.group_id);
   if (body.sync && notionOn(env, category(g.category))) ctx?.waitUntil(syncMeeting(env, cur.id).catch((err) => console.error("other meeting notion failed", err?.status, err?.code || err?.message)));
   return { ok: true, version: version + 1 };
+}
+
+// MTGを消す（議事録ごと）。できるのは、そのMTGを始めた人と管理者。Notionの議事録ページはNotionのゴミ箱へ（Notionからは戻せる）
+async function deleteMeeting({ env, user, params, ctx }) {
+  const m = await env.DB.prepare("SELECT * FROM other_meetings WHERE id = ?").bind(params.id).first();
+  if (!m) throw new HttpError(404, "MTGが見つかりません");
+  if (!user.isAdmin && m.created_by !== user.id) throw new HttpError(403, "このMTGを削除できるのは、始めた人と管理者です");
+  await env.DB.prepare("DELETE FROM other_meetings WHERE id = ?").bind(m.id).run();
+  if (m.notion_url && notionConfigured(env)) ctx?.waitUntil(setNotionArchived(env, m.notion_url, true).catch((err) => console.error("notion archive failed", err?.status, err?.code)));
+  return { ok: true };
 }
 
 // 議事録をNotionへ：1回目はプロジェクトのページの中に新しいページを作る。2回目からは同じページを書き直す

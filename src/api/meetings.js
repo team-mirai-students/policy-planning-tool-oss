@@ -217,6 +217,8 @@ async function getMeeting({ env, user, params }) {
   const canEdit = user.isAdmin || meeting.kind === "exchange" || members.some((m) => m.id === user.id);
   return {
     meeting, minute, members, canEdit,
+    // MTGを消せるのは、PJメンバーと管理者（意見交換会は、だれでも書けるが消せるのはこの人たちだけ）
+    canDelete: user.isAdmin || members.some((x) => x.id === user.id),
     isFirst: !earlier,
     notion: notionConfigured(env),
     project: { id: project.id, name: project.name, type: project.type, memo_doc_url: project.memo_doc_url, meeting_mode: project.meeting_mode, current_stage: project.current_stage, pm_id: project.pm_id, notion_url: project.notion_url, meeting_weekdays: project.meeting_weekdays, meeting_time: project.meeting_time, meeting_interval: project.meeting_interval },
