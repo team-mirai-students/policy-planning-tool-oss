@@ -354,3 +354,48 @@ test("その他のMTG：プロジェクトを作って議事録を書き、次�
   await expect(page.locator(".list")).toContainText(name);
   expect(errors).toEqual([]);
 });
+
+test("意見交換会：PJを選んで、話したことをメモすると、そのPJの記録に議事録として残る", async ({ page }) => {
+  const errors = watchErrors(page);
+  await login(page);
+  const name = `意見交換テストPJ ${stamp}`;
+  await makeProject(page, name);
+  const word = `出た意見${stamp}`;
+  await page.goto("/#/start?kind=event");
+  await page.getByRole("button", { name: /意見交換会/ }).click();
+  await page.locator(".pick", { hasText: name }).click();
+  await confirm(page, "始める");
+  await expect(page.locator("#app h1")).toContainText("意見交換会");
+  await expect(page.locator(".memo-doc")).toBeVisible();
+  await expect(page.locator('.rich-editor[data-field="agenda"]')).toBeHidden();
+  await page.locator('.rich-editor[data-field="summary"]').click();
+  await page.keyboard.type(word);
+  await page.getByRole("button", { name: "MTGを終える" }).click();
+  await confirm(page, "MTGを終える");
+  await expect(page).toHaveURL(/tab=records/);
+  await expect(page.locator(".search-results")).toContainText("意見交換会の議事録");
+  await expect(page.locator(".search-results")).toContainText(word);
+  expect(errors).toEqual([]);
+});
+
+test("意見交換会：PJのメンバーでない人も、議事録を書いて終えられる", async ({ browser }) => {
+  const a = await browser.newPage();
+  const b = await browser.newPage();
+  const errors = watchErrors(b);
+  await login(a);
+  const name = `交換会メンバー外PJ ${stamp}`;
+  await makeProject(a, name);
+  await login(b, `ほかの人${stamp}`);
+  await b.goto("/#/start?kind=event");
+  await b.getByRole("button", { name: /意見交換会/ }).click();
+  await b.locator("details.pick-others summary").click();
+  await b.locator(".pick", { hasText: name }).click();
+  await confirm(b, "始める");
+  await b.locator('.rich-editor[data-field="summary"]').click();
+  await b.keyboard.type("メンバー外の意見");
+  await b.getByRole("button", { name: "MTGを終える" }).click();
+  await confirm(b, "MTGを終える");
+  await expect(b).toHaveURL(/tab=records/);
+  await expect(b.locator(".search-results")).toContainText("メンバー外の意見");
+  expect(errors).toEqual([]);
+});

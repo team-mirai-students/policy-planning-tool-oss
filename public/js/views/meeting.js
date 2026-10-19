@@ -10,6 +10,9 @@ export async function renderMeeting(el, id) {
   // 下書き（次回の日程・MTGの進め方の選びかけ）
   try { data.draft = JSON.parse(data.meeting.draft || "{}") || {}; } catch { data.draft = {}; }
   const { meeting: m, minute, project: p, previous, canEdit } = data;
+  // 意見交換会（定例イベント）：リサーチドキュメントと、話したことのメモだけ。宿題・やること・次回の日程などは出さない
+  const ex = m.kind === "exchange";
+  const exHide = ex ? "hidden" : "";
   // 「議事録を見る」で開いたときは読むだけ。ただし「今回話し合うこと」はMTGの前に書いておける
   const viewOnly = hashQuery().get("mode") === "view";
   // MTG中：「MTGを始める・再開する」から開いたとき（?start=1）だけ。タイマーを動かし、MTGを始めた時刻を残し、「MTGを終える」を出す
@@ -36,18 +39,19 @@ export async function renderMeeting(el, id) {
     <nav class="breadcrumb"><a href="#/projects/${p.id}">${esc(p.name)}</a> / 議事録</nav>
     ${inMeeting ? timerHtml(`meeting-${m.id}`, { bar: true }) : ""}
     <div class="page-heading left">
-      <h1>${fmtDateTime(m.starts_at)} のMTG</h1>
+      <h1>${fmtDateTime(m.starts_at)} ${ex ? "の意見交換会" : "のMTG"}</h1>
       <p class="live-line small"><span id="live-viewers"></span> <span class="muted" id="live-status">${canEdit ? "自動で保存・みんなで同時に書けます" : ""}</span></p>
       <p>${minute ? `最終更新：${esc(minute.updated_by_name || "")}` : "短く、要点だけ。詳しい内容はGoogleドキュメントへ。"}</p>
-      ${canEdit ? `<p class="small"><a href="#/report/${p.id}">${ico("note")} このPJの定例の進捗を書く</a></p>` : ""}
+      ${canEdit && !ex ? `<p class="small"><a href="#/report/${p.id}">${ico("note")} このPJの定例の進捗を書く</a></p>` : ""}
+      ${ex ? `<p class="small">「${esc(p.name)}」の意見交換会です。リサーチドキュメントを見ながら、話したことをメモします。PJの議事録として残ります。</p>` : ""}
       ${viewOnly && canEdit ? `<p class="small">「今回話し合うこと」は、MTGの前に書いておけます。</p>
         <a class="button primary small" href="#/meetings/${m.id}">${ico("edit")} このMTGの議事録を書く</a>` : ""}
     </div>
 
-    ${data.isFirst && canEdit && !viewOnly ? firstMeetingCard(data, memberUsers) : ""}
+    ${data.isFirst && canEdit && !viewOnly && !ex ? firstMeetingCard(data, memberUsers) : ""}
 
     <form class="minutes" id="minutes-form">
-      <section class="card">
+      <section class="card" ${exHide}>
         <div class="section-head"><h2>前回MTGで決まった宿題</h2>${previous?.homework.length ? copyButton("homework") : ""}</div>
         ${previous ? `<p class="muted small">${fmtDateTime(previous.starts_at)} のMTGの「次回までにやること」</p>
           ${previous.homework.length ? `<ul class="checklist">${previous.homework.map((t) => `
@@ -58,7 +62,7 @@ export async function renderMeeting(el, id) {
           : `<p class="muted">このPJで最初の議事録です。</p>`}
       </section>
 
-      <section class="card" data-live="agenda">
+      <section class="card" data-live="agenda" ${exHide}>
         <div class="section-head"><h2>今回話し合うこと <span class="live-badge" data-badge="agenda"></span></h2><span class="row-left">${canEdit ? `<button type="button" class="copy-btn" data-history="agenda" title="これまでに保存した内容">${ico("history")} 履歴</button>` : ""}${copyButton("agenda")}</span></div>
         <label><textarea name="agenda" data-rich rows="3" maxlength="50000" aria-label="今回話し合うこと" ${canEdit ? "" : "disabled"} placeholder="・先行事例の共有&#10;・課題の絞り込み">${esc(minute?.agenda)}</textarea>
           <small class="counter" data-for="agenda"></small></label>
@@ -67,22 +71,22 @@ export async function renderMeeting(el, id) {
       ${memoDocSection(p)}
 
       <section class="card" data-live="summary">
-        <div class="section-head"><h2>話し合いの概要 <span class="live-badge" data-badge="summary"></span></h2><span class="row-left">${canEdit ? `<button type="button" class="copy-btn" data-history="summary" title="これまでに保存した内容">${ico("history")} 履歴</button>` : ""}${copyButton("summary")}</span></div>
-        <label><textarea name="summary" data-rich rows="3" maxlength="50000" aria-label="話し合いの概要" ${ro} placeholder="決まったこと・方向性だけを数行で">${esc(minute?.summary)}</textarea>
+        <div class="section-head"><h2>${ex ? "話したことのメモ" : "話し合いの概要"} <span class="live-badge" data-badge="summary"></span></h2><span class="row-left">${canEdit ? `<button type="button" class="copy-btn" data-history="summary" title="これまでに保存した内容">${ico("history")} 履歴</button>` : ""}${copyButton("summary")}</span></div>
+        <label><textarea name="summary" data-rich rows="3" maxlength="50000" aria-label="${ex ? "話したことのメモ" : "話し合いの概要"}" ${ro} placeholder="${ex ? "出た意見・質問・アドバイスなど" : "決まったこと・方向性だけを数行で"}">${esc(minute?.summary)}</textarea>
           <small class="counter" data-for="summary"></small></label>
       </section>
 
 
-      ${checklistSection(data, ro)}
+      ${ex ? "" : checklistSection(data, ro)}
 
-      <section class="card" data-live="todos">
+      <section class="card" data-live="todos" ${exHide}>
         <div class="section-head"><h2>次回MTGまでにやること <span class="live-badge" data-badge="todos"></span></h2>${copyButton("todos")}</div>
         <p class="muted small">保存するとPJのタスクに登録され、次回の議事録に「宿題」として引き継がれます。</p>
         <div id="todos"></div>
         ${ro ? "" : `<button type="button" class="small" id="add-todo">＋ 追加</button>`}
       </section>
 
-      ${p.meeting_mode === "adhoc" ? nextMeetingSection(data, ro) : ""}
+      ${p.meeting_mode === "adhoc" && !ex ? nextMeetingSection(data, ro) : ""}
 
       <div class="form-actions sticky">
         ${canEdit || m.notion_url ? `<button type="button" id="notion-make" class="notion-btn" title="${m.notion_url ? "Notionの議事録を開く" : "Notionに議事録を作る"}">${ico("note")}<span class="hide-sm"> ${m.notion_url ? "Notionの議事録を開く" : "Notionに議事録を作る"}</span></button>` : ""}
@@ -101,7 +105,7 @@ export async function renderMeeting(el, id) {
   const form = el.querySelector("#minutes-form");
   enhanceRich(form);
   // 初回のMTG：決めること（PM・MTGの進め方・次回・最初のアクション）
-  if (data.isFirst && canEdit && !viewOnly) bindFirstMeeting(el, data, p);
+  if (data.isFirst && canEdit && !viewOnly && !ex) bindFirstMeeting(el, data, p);
   // このMTGを削除する（間違えて開いた・二重に始めたとき）。議事録とタスクも消える
   if (canEdit) {
     el.insertAdjacentHTML("beforeend", `<p class="danger-zone"><button type="button" class="link-btn danger" id="delete-mtg">${ico("trash")} このMTGを削除する</button></p>`);
@@ -548,6 +552,12 @@ export async function renderMeeting(el, id) {
     busy(b, async () => {
       const res = await save();
       clearTimer(`meeting-${m.id}`);
+      // 意見交換会：PJの記録に残ったことを知らせて、そのPJの記録へ
+      if (ex) {
+        toast("意見交換会を終えました。議事録はPJの記録に入りました");
+        location.hash = `#/projects/${p.id}?tab=records`;
+        return;
+      }
       // このMTGでどれだけ進んだか：PJ全体の工程のチェックのうち、このMTGで済んだ分を「前 → 後」で見せる
       const pj = await api(`/api/projects/${p.id}`).catch(() => null);
       const items = (pj?.checklist || []).filter((c) => c.stage_no > 0 && !c.skipped_at);

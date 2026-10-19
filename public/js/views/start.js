@@ -1,5 +1,5 @@
 // ミーティングを始める：PJのMTGか定例イベントかを選ぶ。PJのMTGは、PJを選ぶ → 「予定していたMTG」か「臨時のMTG」かを選ぶ → 議事録を開く
-import { api, esc, fmtDateTime, busy, toast, jstDateTime, todayStr, pjPicker, pickItem, hashQuery } from "../lib.js";
+import { api, esc, fmtDateTime, busy, toast, jstDateTime, todayStr, pjPicker, pickItem, hashQuery, confirmDialog } from "../lib.js";
 import { ico } from "../icons.js";
 import { teireiTargetList } from "./teirei.js";
 import { renderOtherStart } from "./other.js";
@@ -21,7 +21,7 @@ export async function renderStart(el) {
     </div>`;
 }
 
-// 定例イベント：イベントを選ぶ → どの定例の議事録に入れるか選ぶ → 議事録（タイマーつき）が開く
+// 定例イベント：ニュース勉強会は、どの定例の議事録に入れるか選ぶ → 議事録（タイマーつき）。意見交換会は、どのPJの意見交換会か選ぶ
 async function renderEventStart(el) {
   const { today, targets, suggested } = await api("/api/teirei-targets");
   const draw = (event) => {
@@ -32,8 +32,26 @@ async function renderEventStart(el) {
       ${event ? teireiTargetList(targets, suggested, (t) => `#/teirei-event?day=${t.day}&event=${event}&start=1`, today)
         + `<div class="form-actions"><button type="button" data-back>← イベントを選び直す</button></div>`
         : `<ul class="pick-list">${EVENT_KINDS.map(([k, l]) => `<li><button type="button" class="pick" data-event="${k}"><span class="pick-name">${l}</span><span class="pick-arrow" aria-hidden="true">›</span></button></li>`).join("")}</ul>`}`;
-    el.querySelectorAll("[data-event]").forEach((b) => b.addEventListener("click", () => draw(b.dataset.event)));
+    el.querySelectorAll("[data-event]").forEach((b) => b.addEventListener("click", () => (b.dataset.event === "exchange" ? drawExchange() : draw(b.dataset.event))));
     el.querySelector("[data-back]")?.addEventListener("click", () => draw(null));
+  };
+  // 意見交換会：どのPJの意見交換会かを選ぶ → PJの議事録（種類：意見交換会。リサーチドキュメントと話したことのメモ）が開く
+  const drawExchange = async () => {
+    // 部門の進行中のPJすべて（PJのメンバーでなくても選べる。参加中のPJが上）
+    const projects = (await api("/api/projects")).projects.filter((p) => p.status === "active");
+    el.innerHTML = `
+      <nav class="breadcrumb"><a href="#/start">MTGを始める</a> / 定例イベント / 意見交換会</nav>
+      <div class="page-heading left"><h1>${ico("talk")} どのPJの意見交換会ですか？</h1>
+        <p>議事録は、そのPJの議事録として残り、PJの「記録」から見られます</p></div>
+      ${pjPicker(projects, (p) => pickItem({ attrs: `data-ex="${p.id}"`, name: p.name }), { empty: "参加しているPJはありません。下の「ほかのPJ」から選んでください。" })}
+      <div class="form-actions"><button type="button" data-back>← イベントを選び直す</button></div>`;
+    el.querySelector("[data-back]").addEventListener("click", () => draw(null));
+    el.querySelectorAll("[data-ex]").forEach((b) => b.addEventListener("click", async () => {
+      const pj = projects.find((x) => x.id === Number(b.dataset.ex));
+      if (!await confirmDialog(`「${pj.name}」の意見交換会を始めますか？`, { ok: "始める" })) return;
+      busy(b, () => api(`/api/projects/${pj.id}/exchange`, { method: "POST", body: { starts_at: nowRounded() } }))
+        .then((res) => { location.hash = `#/meetings/${res.id}?from=home&start=1`; }).catch(() => {});
+    }));
   };
   draw(null);
 }

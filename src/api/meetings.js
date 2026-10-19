@@ -7,9 +7,10 @@ import { addDays } from "../project-types.js";
 import { regularOccurrences, parseWeekdays } from "../schedule.js";
 import { buildIcs, icsResponse, weeklyRule } from "../ics.js";
 import { loadProject, requireEditor, assertUsers, canEdit } from "./common.js";
-import { notionConfigured, notionPageId, minutesBlocks, createNotionPage, replaceNotionPage, setNotionArchived } from "../notion.js";
+import { notionConfigured, notionPageId, minutesBlocks, exchangeBlocks, createNotionPage, replaceNotionPage, setNotionArchived } from "../notion.js";
 
 export const routes = [
+  ["POST", "/api/projects/:id/exchange", startExchange],
   ["POST", "/api/projects/:id/meetings", createMeeting],
   ["GET", "/api/projects/:id/regular.ics", regularIcs],
   ["GET", "/api/meetings/:id", getMeeting],
@@ -134,15 +135,18 @@ async function createNotionMinutes({ env, user, params, url }) {
 async function notionMinutes(env, meeting, project) {
   const minute = await env.DB.prepare("SELECT * FROM minutes WHERE meeting_id = ?").bind(meeting.id).first();
   const prev = await env.DB.prepare(
-    `SELECT n.id FROM minutes n JOIN meetings m ON m.id = n.meeting_id WHERE n.project_id = ? AND m.starts_at < ? ORDER BY m.starts_at DESC LIMIT 1`
+    `SELECT n.id FROM minutes n JOIN meetings m ON m.id = n.meeting_id WHERE n.project_id = ? AND m.starts_at < ? AND m.kind != 'exchange' ORDER BY m.starts_at DESC LIMIT 1`
   ).bind(project.id, meeting.starts_at).first();
   const tasksOf = (minuteId) => env.DB.prepare(
     `SELECT ${TASK_COLUMNS} FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id WHERE t.source_minute_id = ? ORDER BY t.id`
   ).bind(minuteId).all().then((r) => r.results);
   const [homework, todos] = await Promise.all([prev ? tasksOf(prev.id) : [], minute ? tasksOf(minute.id) : []]);
   const d = meeting.starts_at;
-  const title = `${d.slice(0, 4)}/${d.slice(5, 7)}/${d.slice(8, 10)} MTG議事録`;
   const appUrl = env.APP_URL ? `${env.APP_URL}/#/meetings/${meeting.id}?mode=view` : "";
+  if (meeting.kind === "exchange") {
+    return { title: `${d.slice(0, 4)}/${d.slice(5, 7)}/${d.slice(8, 10)} 意見交換会 議事録`, blocks: exchangeBlocks({ summary: minute?.summary, docUrl: project.memo_doc_url, appUrl }) };
+  }
+  const title = `${d.slice(0, 4)}/${d.slice(5, 7)}/${d.slice(8, 10)} MTG議事録`;
   return { title, blocks: minutesBlocks({ homework, agenda: minute?.agenda, summary: minute?.summary, todos, appUrl }) };
 }
 
@@ -185,7 +189,7 @@ async function getMeeting({ env, user, params }) {
   // 前回の議事録の「次回までにやること」＝今回の宿題
   const prev = await env.DB.prepare(
     `SELECT n.id, m.starts_at FROM minutes n JOIN meetings m ON m.id = n.meeting_id
-     WHERE n.project_id = ? AND m.starts_at < ? ORDER BY m.starts_at DESC LIMIT 1`
+     WHERE n.project_id = ? AND m.starts_at < ? AND m.kind != 'exchange' ORDER BY m.starts_at DESC LIMIT 1`
   ).bind(project.id, meeting.starts_at).first();
   const tasksOf = (minuteId) =>
     env.DB.prepare(`SELECT ${TASK_COLUMNS} FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id
@@ -193,7 +197,7 @@ async function getMeeting({ env, user, params }) {
 
   // このPJの初回のMTGか（中止していないMTGのうち、いちばん早いもの）。初回だけPMを決められる
   const earlier = await env.DB.prepare(
-    "SELECT 1 FROM meetings WHERE project_id = ?1 AND cancelled = 0 AND id != ?3 AND (starts_at < ?2 OR (starts_at = ?2 AND id < ?3)) LIMIT 1"
+    "SELECT 1 FROM meetings WHERE project_id = ?1 AND cancelled = 0 AND kind != 'exchange' AND id != ?3 AND (starts_at < ?2 OR (starts_at = ?2 AND id < ?3)) LIMIT 1"
   ).bind(project.id, meeting.starts_at, meeting.id).first();
   const [members, homework, todos, nextMeeting, checklist] = await Promise.all([
     env.DB.prepare(
@@ -209,7 +213,8 @@ async function getMeeting({ env, user, params }) {
        WHERE c.project_id = ?1 AND (c.stage_no = ?2 OR c.meeting_id = ?3) ORDER BY c.stage_no, c.sort, c.id`
     ).bind(project.id, project.current_stage, meeting.id).all().then((r) => r.results),
   ]);
-  const canEdit = user.isAdmin || members.some((m) => m.id === user.id);
+  // 意見交換会の議事録は、部門のだれでも書ける（PJの外の人も話すので）
+  const canEdit = user.isAdmin || meeting.kind === "exchange" || members.some((m) => m.id === user.id);
   return {
     meeting, minute, members, canEdit,
     isFirst: !earlier,
@@ -224,7 +229,7 @@ async function getMeeting({ env, user, params }) {
 
 function nextMeetingAfter(env, projectId, startsAt) {
   return env.DB.prepare(
-    "SELECT id, starts_at, place, kind FROM meetings WHERE project_id = ? AND cancelled = 0 AND starts_at > ? ORDER BY starts_at LIMIT 1"
+    "SELECT id, starts_at, place, kind FROM meetings WHERE project_id = ? AND cancelled = 0 AND kind != 'exchange' AND starts_at > ? ORDER BY starts_at LIMIT 1"
   ).bind(projectId, startsAt).first();
 }
 
@@ -284,7 +289,7 @@ async function keepRevision(env, meetingId, field, text, userId, now, current, f
 // 議事録の文章の履歴（新しい順）。PJメンバーと管理者が見て、戻せる
 async function listRevisions({ env, user, params, url }) {
   const meeting = await loadMeeting(env, params.id);
-  await requireEditor(env, user, meeting.project_id);
+  await requireMinutesEditor(env, user, meeting);
   const field = ["agenda", "summary"].includes(url.searchParams.get("field")) ? url.searchParams.get("field") : "summary";
   const { results } = await env.DB.prepare(
     `SELECT r.id, r.body, r.created_at, r.updated_at, u.name FROM minute_revisions r LEFT JOIN users u ON u.id = r.user_id
@@ -299,7 +304,7 @@ const TODOS_MAX = 100; // 「次回までにやること」の上限（件）
 // 議事録を保存する。送られてきた項目だけを書き換える（自動保存は1項目ずつ送る）
 async function saveMinutes({ request, env, user, params, ctx }) {
   const meeting = await loadMeeting(env, params.id);
-  await requireEditor(env, user, meeting.project_id);
+  await requireMinutesEditor(env, user, meeting);
   const project = await loadProject(env, meeting.project_id);
   const body = await readJson(request);
   const now = Date.now();
@@ -450,7 +455,7 @@ async function liveMinutes({ request, env, user, params }) {
   const meeting = await loadMeeting(env, params.id);
   const body = await readJson(request);
   const now = Date.now();
-  const editable = await canEdit(env, user, meeting.project_id);
+  const editable = meeting.kind === "exchange" || await canEdit(env, user, meeting.project_id);
   const field = editable && LIVE_FIELDS.includes(body.field) ? body.field : null;
   // MTGを始めた時刻（タイマーの起点）。書く画面で開いたときに記録し、4時間たっていたら始め直しとみなす
   if (editable && body.start) {
@@ -481,7 +486,7 @@ async function liveMinutes({ request, env, user, params }) {
     ).bind(meeting.id, fresh).all().then((r) => r.results),
     env.DB.prepare(
       `SELECT n.id FROM minutes n JOIN meetings m ON m.id = n.meeting_id
-       WHERE n.project_id = ? AND m.starts_at < ? ORDER BY m.starts_at DESC LIMIT 1`
+       WHERE n.project_id = ? AND m.starts_at < ? AND m.kind != 'exchange' ORDER BY m.starts_at DESC LIMIT 1`
     ).bind(meeting.project_id, meeting.starts_at).first(),
   ]);
   const tasksOf = (minuteId) => env.DB.prepare(
@@ -539,4 +544,22 @@ async function regularIcs({ env, params }) {
     rrule: weeklyRule(weekdays, project.meeting_interval),
   }]);
   return icsResponse(body, `regular-${project.id}.ics`);
+}
+
+// 議事録を書けるか：PJメンバーと管理者。意見交換会は部門のだれでも
+async function requireMinutesEditor(env, user, meeting) {
+  if (meeting.kind === "exchange") return;
+  await requireEditor(env, user, meeting.project_id);
+}
+
+// 定例イベントの意見交換会：どのPJの意見交換会かを選んで始める。PJのMTG（種類：意見交換会）として、PJの議事録と同じ場所に残る
+async function startExchange({ request, env, user, params }) {
+  const project = await loadProject(env, params.id);
+  const body = await readJson(request);
+  const startsAt = typeof body.starts_at === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(body.starts_at) ? body.starts_at : null;
+  if (!startsAt) throw new HttpError(400, "日時が正しくありません");
+  const row = await env.DB.prepare(
+    `INSERT INTO meetings (project_id, starts_at, duration_min, kind, place, created_by, created_at) VALUES (?, ?, 60, 'exchange', '', ?, ?) RETURNING id`
+  ).bind(project.id, startsAt, user.id, Date.now()).first();
+  return { id: row.id };
 }

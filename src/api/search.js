@@ -38,7 +38,7 @@ async function searchMinutes({ env, url }) {
     const todos = "(SELECT group_concat(t.title, '\n') FROM tasks t WHERE t.source_minute_id = n.id)";
     const w = whereAll(words, ["n.agenda", "n.summary", todos]);
     const { results: rows } = await env.DB.prepare(
-      `SELECT n.meeting_id AS id, m.starts_at AS at, p.id AS project_id, p.name AS project_name,
+      `SELECT n.meeting_id AS id, m.starts_at AS at, m.kind, p.id AS project_id, p.name AS project_name,
               n.agenda, n.summary, ${todos} AS todos
        FROM minutes n JOIN meetings m ON m.id = n.meeting_id JOIN projects p ON p.id = n.project_id
        WHERE p.status != 'archived' ${projectId ? "AND p.id = ?" : ""} ${words.length ? `AND ${w.cond}` : ""}${dateCond("m.starts_at")}
@@ -47,8 +47,9 @@ async function searchMinutes({ env, url }) {
     for (const r of rows) {
       results.push({
         kind: "meeting", at: r.at, href: `#/meetings/${r.id}?mode=view`, project_id: r.project_id, project_name: r.project_name,
-        title: "MTGの議事録",
-        text: [r.agenda && `今回話し合うこと：${r.agenda}`, r.summary && `概要：${r.summary}`, r.todos && `次回までにやること：${r.todos}`].filter(Boolean).join("\n"),
+        title: r.kind === "exchange" ? "意見交換会の議事録" : "MTGの議事録",
+        text: r.kind === "exchange" ? (r.summary ? `話したこと：${r.summary}` : "")
+          : [r.agenda && `今回話し合うこと：${r.agenda}`, r.summary && `概要：${r.summary}`, r.todos && `次回までにやること：${r.todos}`].filter(Boolean).join("\n"),
       });
     }
   }

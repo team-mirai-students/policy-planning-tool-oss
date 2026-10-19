@@ -63,7 +63,7 @@ async function remindNextMeeting(env) {
   const { results: projects } = await env.DB.prepare(
     `SELECT p.id, p.name FROM projects p
      WHERE p.status = 'active' AND p.meeting_mode = 'adhoc'
-       AND EXISTS (SELECT 1 FROM meetings m WHERE m.project_id = p.id AND m.cancelled = 0 AND m.starts_at < ?1)
+       AND EXISTS (SELECT 1 FROM meetings m WHERE m.project_id = p.id AND m.cancelled = 0 AND m.kind != 'exchange' AND m.starts_at < ?1)
        AND NOT EXISTS (SELECT 1 FROM meetings m WHERE m.project_id = p.id AND m.cancelled = 0 AND m.starts_at >= ?1)`
   ).bind(now).all();
   for (const p of projects) {

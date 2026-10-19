@@ -427,3 +427,11 @@ export function noteBlocks(md, appUrl = "") {
   if (appUrl) blocks.push(para(`政策立案ツールの議事録：${appUrl}`));
   return blocks;
 }
+
+// 意見交換会の議事録：リサーチドキュメントへのリンクと、話したことのメモ
+export function exchangeBlocks({ summary = "", docUrl = "", appUrl = "" }) {
+  const blocks = [heading("リサーチドキュメント"), para(docUrl || "（未登録）"), heading("話したこと")];
+  blocks.push(...(lines(summary).length ? nest(summary) : [para("（なし）")]));
+  if (appUrl) blocks.push(para(`政策立案ツールの議事録：${appUrl}`));
+  return blocks;
+}

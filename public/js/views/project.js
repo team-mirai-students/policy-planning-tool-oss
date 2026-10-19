@@ -182,7 +182,7 @@ function renderStages(body, data, ro, reload) {
             </li>`).join("")}
         </ul>
         ${ms.length ? `<div class="stage-minutes"><h4>この工程のMTG・議事録</h4><ul>${ms.map((m) => `
-          <li><a class="minute-link" href="#/meetings/${m.id}">${ico("note")} ${fmtDateTime(m.starts_at)} のMTG${m.minute_id ? "" : "（議事録まだ）"}</a></li>`).join("")}</ul></div>` : ""}
+          <li><a class="minute-link" href="#/meetings/${m.id}">${ico("note")} ${fmtDateTime(m.starts_at)} ${m.kind === "exchange" ? "の意見交換会" : "のMTG"}${m.minute_id ? "" : "（議事録まだ）"}</a></li>`).join("")}</ul></div>` : ""}
         ${ro ? "" : `
           <form class="inline-form" data-add-check="${s.no}">
             <input name="label" maxlength="120" placeholder="このPJ独自の項目を追加" required>

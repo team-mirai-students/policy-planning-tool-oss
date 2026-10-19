@@ -390,12 +390,12 @@ async function toggleChecklistItem({ request, env, user, params }) {
 async function meetingForToday(env, projectId) {
   const today = todayJst();
   const sameDay = await env.DB.prepare(
-    `SELECT id FROM meetings WHERE project_id = ? AND cancelled = 0 AND starts_at >= ? AND starts_at < ? ORDER BY starts_at DESC LIMIT 1`
+    `SELECT id FROM meetings WHERE project_id = ? AND cancelled = 0 AND kind != 'exchange' AND starts_at >= ? AND starts_at < ? ORDER BY starts_at DESC LIMIT 1`
   ).bind(projectId, `${today}T00:00`, `${addDays(today, 1)}T00:00`).first();
   if (sameDay) return sameDay.id;
   const recent = await env.DB.prepare(
     `SELECT m.id FROM meetings m JOIN minutes n ON n.meeting_id = m.id
-     WHERE m.project_id = ? AND m.cancelled = 0 AND m.starts_at >= ? AND m.starts_at <= ? ORDER BY m.starts_at DESC LIMIT 1`
+     WHERE m.project_id = ? AND m.cancelled = 0 AND m.kind != 'exchange' AND m.starts_at >= ? AND m.starts_at <= ? ORDER BY m.starts_at DESC LIMIT 1`
   ).bind(projectId, `${addDays(today, -7)}T00:00`, nowJst()).first();
   return recent?.id || null;
 }
