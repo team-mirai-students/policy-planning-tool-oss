@@ -66,6 +66,10 @@ NOTION_OTHER_PAGE = ""
 [env.test]
 name = "policy-planning-test"
 
+# デプロイの版（画面の自動更新に使う）。環境ごとに書かないと引き継がれない
+[env.test.version_metadata]
+binding = "CF_VERSION"
+
 [[env.test.d1_databases]]
 binding = "DB"
 database_name = "policy-planning-test"

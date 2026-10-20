@@ -143,9 +143,9 @@ npx wrangler secret put SENTRY_DSN
 
 本番とは別のURL・別のDBで動く。画面上部に「テスト版」の帯が出る。毎朝のリマインドと渉外フォーラムへのスレッド作成はしない。
 
-- URL：https://policy-planning-test.〇〇.workers.dev
+- URL：https://policy-planning-test.〇〇.workers.dev（本番と同じ学生部の Cloudflare アカウント。2026-10-20 に個人のアカウントから移した）
 - 更新：`npx wrangler d1 migrations apply policy-planning-test --remote --env test` → `npx wrangler deploy --env test`
-- 最初に1回だけ：Discordの開発者ポータル（OAuth2 → Redirects）に `https://policy-planning-test.〇〇.workers.dev/auth/callback` を追加し、`npx wrangler secret put DISCORD_CLIENT_SECRET --env test` でClient Secretを入れる
+- 最初に1回だけ：Discordの開発者ポータル（OAuth2 → Redirects）に `https://policy-planning-test.〇〇.workers.dev/auth/callback` を追加し、`npx wrangler secret put DISCORD_CLIENT_ID --env test` と `npx wrangler secret put DISCORD_CLIENT_SECRET --env test` を入れる（`SESSION_SECRET` は入れてある）
 
 ### ヒアリング申請の通知とスレッド作成を有効にする（フェーズ1b）
 
