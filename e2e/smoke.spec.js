@@ -283,8 +283,12 @@ test("定例イベントのMTGと進捗は、どの定例に入れるか選べ�
   await login(page);
   // 定例の予定を入れる（毎週月曜 22:00）
   await page.goto("/#/teirei/schedule");
+  await expect(page.locator("#schedule-form")).toBeVisible();
+  const schedulesBefore = await page.locator("[data-del]").count();
   await page.getByRole("button", { name: "予定に追加" }).click();
   await expect(page.locator(".toast")).toContainText("定例を予定しました");
+  // 通知は一覧の再読み込みより先に出る。再描画が終わってから次の画面へ進む。
+  await expect(page.locator("[data-del]")).toHaveCount(schedulesBefore + 1);
 
   // MTGを始める → 定例イベント → ニュース勉強会 → 次の定例
   const word = `勉強会メモ${stamp}`;
@@ -308,23 +312,26 @@ test("定例イベントのMTGと進捗は、どの定例に入れるか選べ�
   await page.locator(".pick-list .pick").first().click();
   await expect(page.locator("#app h1")).toContainText("どのPJの進捗");
 
-  // その定例に向けて書いた進捗と、日を決めずに書いた進捗は、その定例を始めると1つにまとまって入る
-  const merged = await page.evaluate(async (d) => {
-    const j = (u, o) => fetch(u, o && { method: o.method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(o.body) }).then((r) => r.json());
-    const { projects, meeting: before } = await j(`/api/dept-reports?day=${d}`);
+  // 選んだ定例に保存した進捗が、その定例を始めた後にも残ることを確認する。
+  // 日を指定しない旧APIは別の進行中の定例を指す場合があるため、混ぜない。
+  // 旧形式の書き置きの取り込みは test/dept-report.test.js で独立して確認する。
+  const saved = await page.evaluate(async (d) => {
+    const j = async (u, o) => {
+      const r = await fetch(u, o && { method: o.method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(o.body) });
+      if (!r.ok) throw new Error(`${u}: ${r.status}`);
+      return r.json();
+    };
+    const { projects } = await j(`/api/dept-reports?day=${d}`);
     const pid = projects[0].id;
-    const v0 = (await j(`/api/projects/${pid}/dept-report`)).report.version;
-    await j(`/api/projects/${pid}/dept-report`, { method: "PUT", body: { done: "日を決めずに書いた", next: "", issues: "", version: v0 } });
-    const v1 = (await j(`/api/projects/${pid}/dept-report?day=${d}`)).report.version;
-    await j(`/api/projects/${pid}/dept-report`, { method: "PUT", body: { done: "この日に向けて書いた", next: "", issues: "", version: v1, day: d } });
+    const { report } = await j(`/api/projects/${pid}/dept-report?day=${d}`);
+    await j(`/api/projects/${pid}/dept-report`, { method: "PUT", body: { done: "この日に向けて書いた", next: "", issues: "", version: report.version, day: d } });
     const { id } = await j("/api/dept-meetings", { method: "POST", body: { starts_at: `${d}T22:00` } });
     const { reports, meeting } = await j(`/api/dept-meetings/${id}`);
-    return { fresh: !before, done: reports.find((r) => r.project_id === pid)?.done, news: meeting.news };
+    return { day: meeting.held_on, done: reports.find((r) => r.project_id === pid)?.done, news: meeting.news };
   }, day);
-  expect(merged.done).toContain("この日に向けて書いた");
-  // （前の回のテストで、その日の定例がもう始まっていたときは、両方とも同じ定例に直接入るので、まとめる確認はしない）
-  if (merged.fresh) expect(merged.done).toContain("日を決めずに書いた");
-  expect(merged.news).toContain(word);
+  expect(saved.day).toBe(day);
+  expect(saved.done).toContain("この日に向けて書いた");
+  expect(saved.news).toContain(word);
   expect(errors).toEqual([]);
 });
 
@@ -475,10 +482,45 @@ test("「戻る」で、保存したフォームや終えたMTGに戻らない�
   const top = async (hash) => {
     await page.goto(`/${hash}`);
     await expect(page.locator("#app > .loading")).toHaveCount(0);
-    return page.locator("#app .breadcrumb .back-btn").first().evaluate((b) => Math.round(b.getBoundingClientRect().top));
+    const button = page.locator("#app .breadcrumb .back-btn").first();
+    await expect(button).toBeVisible();
+    await expect(page.locator("#app")).not.toHaveClass(/entering/);
+    // ページの上からの位置（画面のスクロールの位置に左右されないように）
+    return button.evaluate((b) => Math.round(b.getBoundingClientRect().top + window.scrollY));
   };
   const a = await top("#/check");
   expect(await top("#/notices")).toBe(a);
   expect(await top("#/projects")).toBe(a);
+  expect(errors).toEqual([]);
+});
+
+test("定例の曜日・時間決めアンケート：ホームから作って答え、結果から定例を予定に入れる", async ({ page }) => {
+  const errors = watchErrors(page);
+  await login(page);
+  await page.goto("/#/");
+  await page.locator("#add-survey").click();
+  await page.locator("[data-kind=teirei]").click();
+  await expect(page.locator("#app h1")).toContainText("定例の曜日・時間決め");
+  // 候補：月〜金 × 21:00・22:00 = 10個。月は来月（初めから選ばれている）
+  await expect(page.locator("#slot-count")).toContainText("10 個");
+  await page.getByRole("button", { name: "ホームに出す" }).click();
+  await expect(page.locator(".survey-opt")).toHaveCount(10);
+  await expect(page.locator(".survey-opt").first()).toContainText("月曜 21:00");
+  // 答える（出られるもの：月曜 21:00 と 水曜 22:00）
+  await page.locator(".survey-opt", { hasText: "月曜 21:00" }).click();
+  await page.locator(".survey-opt", { hasText: "水曜 22:00" }).click();
+  await page.getByRole("button", { name: "回答する" }).click();
+  await expect(page.locator(".toast")).toContainText("回答しました");
+  // 結果から、月曜 21:00 で予定に入れる
+  const row = page.locator(".bar-row", { hasText: "月曜 21:00" });
+  await row.getByRole("button", { name: "この時間で予定する" }).click();
+  await confirm(page, "予定に入れる");
+  // （前の回のテストで同じ月に入れてあれば「もう予定されています」になる）
+  await expect(page.locator(".toast")).toContainText(/毎週月曜 21:00の定例を予定しました|もう予定されています/);
+  await page.goto("/#/teirei/schedule");
+  await expect(page.locator("#app")).toContainText("毎週月曜 21:00");
+  // ホームのアンケートにも出る
+  await page.goto("/#/");
+  await expect(page.locator(".survey-btn", { hasText: "定例の曜日・時間決め" }).first()).toBeVisible();
   expect(errors).toEqual([]);
 });

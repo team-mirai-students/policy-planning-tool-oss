@@ -1,5 +1,5 @@
-// ホームのアンケート：管理者が追加（PJ決めアンケート／その他のアンケート）、みんなが答える、結果を見る
-import { api, esc, shareButton, state, avatar, busy, toast, confirmDialog, fmtDateTime, jstDateTime, celebrate, replaceHash } from "../lib.js";
+// ホームのアンケート：管理者が追加（PJ決めアンケート／定例の曜日・時間決め／その他のアンケート）、みんなが答える、結果を見る
+import { api, esc, shareButton, state, avatar, busy, toast, confirmDialog, fmtDateTime, jstDateTime, celebrate, replaceHash, hashQuery, todayStr, WEEK } from "../lib.js";
 import { ico } from "../icons.js";
 
 const METHODS = {
@@ -18,7 +18,7 @@ export async function homeSurveys(box) {
     ${open.length || polls.length ? `<div class="survey-buttons">${polls.map((x) => `
       <a class="survey-btn" href="#/schedule-polls/${x.id}"><span class="survey-icon">${ico("calendar")}</span><strong>${esc(x.project_name)}の日程調整</strong><span class="small">回答する ›</span></a>`).join("")}${open.map((s) => `
       <a class="survey-btn ${s.answered ? "is-done" : ""}" href="${s.kind === "pj" ? `#/seeds/${s.round_id}` : `#/surveys/${s.id}`}">
-        <span class="survey-icon">${ico(s.kind === "pj" ? "ballot" : "chart")}</span><strong>${esc(s.title)}</strong>
+        <span class="survey-icon">${ico(s.kind === "pj" ? "ballot" : s.kind === "teirei" ? "calendar" : "chart")}</span><strong>${esc(s.title)}</strong>
         <span class="small">${s.answered ? "✓ 回答済み" : "回答する ›"}</span></a>`).join("")}</div>` : ""}
     ${state.me.isAdmin ? `<p class="home-admin"><button type="button" class="small" id="add-survey">＋ アンケートを追加</button>
       ${surveys.some((s) => s.closed_at) ? `<a class="small" href="#/surveys">締め切ったアンケート</a>` : ""}</p>` : ""}`;
@@ -34,6 +34,7 @@ function addSurveyDialog() {
       <p><strong>どのアンケートを追加しますか？</strong></p>
       <div class="survey-kinds">
         <button type="button" class="kind-btn" data-kind="pj"><span class="kind-icon">${ico("ballot")}</span><span class="kind-text"><strong>PJ決めアンケート</strong><small class="muted">政策の種に投票して、PJを決める</small></span></button>
+        <button type="button" class="kind-btn" data-kind="teirei"><span class="kind-icon">${ico("calendar")}</span><span class="kind-text"><strong>定例の曜日・時間決め</strong><small class="muted">来月の毎週の定例を、何曜日の何時にするか決める（月に1度）</small></span></button>
         <button type="button" class="kind-btn" data-kind="other"><span class="kind-icon">${ico("chart")}</span><span class="kind-text"><strong>その他のアンケート</strong><small class="muted">多数決・希望を聞く・RCV・STV から選ぶ</small></span></button>
       </div>
       <div class="form-actions"><button type="button" data-no>キャンセル</button></div>
@@ -41,6 +42,7 @@ function addSurveyDialog() {
   const close = () => back.remove();
   back.addEventListener("click", (e) => { if (e.target === back || e.target.closest("[data-no]")) close(); });
   back.querySelector("[data-kind=other]").addEventListener("click", () => { close(); location.hash = "#/surveys/new"; });
+  back.querySelector("[data-kind=teirei]").addEventListener("click", () => { close(); location.hash = "#/surveys/new?kind=teirei"; });
   back.querySelector("[data-kind=pj]").addEventListener("click", async (e) => {
     close();
     if (!await confirmDialog("PJ決めアンケートを開始しますか？\nみんなのホーム画面に「PJ決めアンケート」のボタンが出て、押すとPJ決めの投票ができます。", { ok: "開始する" })) return;
@@ -57,6 +59,7 @@ function addSurveyDialog() {
 // その他のアンケートを作る（管理者）
 export async function renderSurveyNew(el) {
   if (!state.me.isAdmin) throw new Error("アンケートを追加できるのは、管理者です");
+  if (hashQuery().get("kind") === "teirei") return renderTeireiSurveyNew(el);
   el.innerHTML = `
     <nav class="breadcrumb"><a href="#/">ホーム</a> / アンケートを追加</nav>
     <div class="page-heading"><h1>${ico("chart")} その他のアンケート</h1></div>
@@ -92,6 +95,64 @@ export async function renderSurveyNew(el) {
       .then((res) => { toast("アンケートをホームに出しました"); replaceHash(`#/surveys/${res.id}`); }).catch(() => {});
   });
 }
+// 定例の曜日・時間決め：月を選び、候補の曜日（いくつでも）× 時刻（いくつでも）を選ぶ。全部の組み合わせが選択肢になる
+const ymLabel = (ym) => `${Number(ym.slice(0, 4))}年${Number(ym.slice(5))}月`;
+const addMonth = (ym, n) => {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + n, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+};
+const MON_FIRST = [1, 2, 3, 4, 5, 6, 0];
+function renderTeireiSurveyNew(el) {
+  const thisMonth = todayStr().slice(0, 7);
+  const months = [0, 1, 2].map((n) => addMonth(thisMonth, n));
+  el.innerHTML = `
+    <nav class="breadcrumb"><a href="#/">ホーム</a> / アンケートを追加</nav>
+    <div class="page-heading"><h1>${ico("calendar")} 定例の曜日・時間決め</h1>
+      <p>毎週の定例を、何曜日の何時にするかを決めるアンケートです。みんなは、出られる曜日・時間を全部選びます。</p></div>
+    <form class="card form" id="teirei-survey">
+      <label>どの月の定例ですか？
+        <select name="month">${months.map((m, i) => `<option value="${m}" ${i === 1 ? "selected" : ""}>${ymLabel(m)}${i === 0 ? "（今月）" : i === 1 ? "（来月）" : ""}</option>`).join("")}</select></label>
+      <fieldset><legend>候補の曜日（いくつでも）</legend>
+        <div class="weekday-picker">${MON_FIRST.map((w) => `<label class="chip-check"><input type="checkbox" name="weekday" value="${w}" ${w >= 1 && w <= 5 ? "checked" : ""}><span>${WEEK[w]}</span></label>`).join("")}</div>
+      </fieldset>
+      <div class="field"><strong>候補の時刻（いくつでも）</strong>
+        <div id="times">${["21:00", "22:00"].map(timeRow).join("")}</div>
+        <button type="button" class="small" id="add-time">＋ 時刻を足す</button>
+      </div>
+      <p class="muted small" id="slot-count"></p>
+      <label>説明（任意）<textarea name="description" rows="2" maxlength="1000" placeholder="例：来月の定例の曜日と時間を決めます。出られるものを全部選んでください"></textarea></label>
+      <div class="form-actions"><a class="button" href="#/">キャンセル</a><button class="primary">ホームに出す</button></div>
+    </form>`;
+  const form = el.querySelector("#teirei-survey");
+  const slots = () => {
+    const days = [...form.querySelectorAll("[name=weekday]:checked")].map((c) => Number(c.value));
+    const times = [...new Set([...form.querySelectorAll("[name=time]")].map((i) => i.value).filter(Boolean))].sort();
+    return days.flatMap((weekday) => times.map((time) => ({ weekday, time })));
+  };
+  const count = () => {
+    const n = slots().length;
+    el.querySelector("#slot-count").textContent = n > 30 ? `候補が ${n} 個あります。30個までにしてください` : `候補は ${n} 個（曜日 × 時刻）`;
+  };
+  form.addEventListener("input", count);
+  form.addEventListener("change", count);
+  el.querySelector("#add-time").addEventListener("click", () => {
+    el.querySelector("#times").insertAdjacentHTML("beforeend", timeRow(""));
+    el.querySelector("#times .opt-row:last-child input").focus();
+    count();
+  });
+  el.querySelector("#times").addEventListener("click", (e) => { if (e.target.closest("[data-del]")) { e.target.closest(".opt-row").remove(); count(); } });
+  count();
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const body = { kind: "teirei", month: form.month.value, slots: slots(), description: form.description.value };
+    if (body.slots.length < 2) return toast("候補（曜日と時刻）を2つ以上選んでください", "error");
+    busy(e.submitter, () => api("/api/surveys", { method: "POST", body }))
+      .then((res) => { toast("アンケートをホームに出しました"); replaceHash(`#/surveys/${res.id}`); }).catch(() => {});
+  });
+}
+const timeRow = (v) => `<div class="opt-row"><input name="time" type="time" value="${v}" aria-label="時刻"><button type="button" class="link-btn" data-del aria-label="この時刻を消す">✕</button></div>`;
+
 const optionRow = () => `<div class="opt-row"><input name="option" maxlength="80" aria-label="選択肢"><button type="button" class="link-btn" data-del aria-label="この選択肢を消す">✕</button></div>`;
 
 // 締め切ったアンケートの一覧（管理者）
@@ -111,7 +172,7 @@ export async function renderSurvey(el, id) {
   const d = await api(`/api/surveys/${id}`);
   const s = d.survey;
   if (s.kind === "pj") { location.replace(`#/seeds/${s.round_id}`); return; }
-  const [mLabel, mNote] = METHODS[s.method];
+  const [mLabel, mNote] = s.kind === "teirei" ? ["定例の曜日・時間決め", "出られる曜日・時間を、全部選んでください"] : METHODS[s.method];
   let picks = d.mine?.picks.slice() || [];
   const closed = Boolean(s.closed_at);
 
@@ -156,6 +217,14 @@ export async function renderSurvey(el, id) {
       .then(() => { toast(d.mine ? "回答を書き直しました" : "回答しました"); renderSurvey(el, id); }).catch(() => {});
   });
   if (d.results) el.querySelector("#results").innerHTML = resultsHtml(s, d.results, d.answers);
+  // 定例の曜日・時間決め：結果から、その月の定例を予定に入れる（管理者）
+  el.querySelectorAll("[data-schedule]").forEach((b) => b.addEventListener("click", async () => {
+    const label = s.options[Number(b.dataset.schedule)];
+    const ym = s.meta.month;
+    if (!await confirmDialog(`${Number(ym.slice(5))}月の定例を、毎週「${label}」で予定しますか？\n\n定例の予定（定例 → 定例を予定する）に、${Number(ym.slice(5))}月の1日〜末日で入ります。`, { ok: "予定に入れる" })) return;
+    busy(b, () => api(`/api/surveys/${id}/teirei-schedule`, { method: "POST", body: { slot: Number(b.dataset.schedule) } }))
+      .then((res) => { toast(`${res.label}の定例を予定しました`); b.outerHTML = `<span class="tag">${ico("check")} 予定に入れました</span>`; }).catch(() => {});
+  }));
   el.querySelector("#toggle-close")?.addEventListener("click", async (e) => {
     if (!closed && !await confirmDialog("このアンケートを締め切りますか？ホームのボタンが消えて、みんなが結果を見られるようになります。", { ok: "締め切る" })) return;
     busy(e.currentTarget, () => api(`/api/surveys/${id}`, { method: "PATCH", body: { closed: !closed } }))
@@ -174,7 +243,8 @@ function resultsHtml(s, r, answers) {
   const label = ranked(s.method) ? "第1希望の数" : "票数";
   const bars = s.options.map((o, i) => `
     <li class="bar-row ${r.winners?.includes(i) ? "is-win" : ""}"><span class="bar-label">${r.winners?.includes(i) ? `${ico("trophy")} ` : ""}${esc(o)}</span>
-      <span class="bar"><span style="width:${(r.counts[i] / max) * 100}%"></span></span><span class="bar-n">${r.counts[i]}</span></li>`).join("");
+      <span class="bar"><span style="width:${(r.counts[i] / max) * 100}%"></span></span><span class="bar-n">${r.counts[i]}</span>
+      ${s.kind === "teirei" && answers && r.total ? `<button type="button" class="small" data-schedule="${i}">この時間で予定する</button>` : ""}</li>`).join("");
   const rounds = (r.rounds || []).map((x, n) => `
     <li><strong>${n + 1}回目</strong>：${Object.entries(x.tallies).map(([c, v]) => `${name(c)} ${v}`).join("・")}
       ${x.winner != null ? `→ <b>${name(x.winner)}</b> に決定` : ""}
@@ -184,7 +254,8 @@ function resultsHtml(s, r, answers) {
     <section class="card">
       <h2>結果 ${s.closed_at ? "" : `<small class="muted">（締め切るまで、見られるのは管理者だけ）</small>`}</h2>
       ${r.total ? "" : `<p class="muted">まだ回答がありません。</p>`}
-      ${r.winners?.length && r.total ? `<p class="survey-winner">${s.method === "wish" ? "いちばん多い希望" : "決まったもの"}：<b>${r.winners.map(name).join("・")}</b></p>` : ""}
+      ${s.kind === "teirei" ? `<p class="muted small">数字は「出られる」と答えた人数です。${answers ? "決めたら「この時間で予定する」を押すと、その月の定例の予定に入ります。" : ""}</p>` : ""}
+      ${r.winners?.length && r.total ? `<p class="survey-winner">${s.kind === "teirei" ? "出られる人がいちばん多い時間" : s.method === "wish" ? "いちばん多い希望" : "決まったもの"}：<b>${r.winners.map(name).join("・")}</b></p>` : ""}
       <p class="muted small">${label}${s.method === "stv" ? `・当選に必要な票（基数）：${r.quota}` : ""}</p>
       <ul class="bars">${bars}</ul>
       ${rounds ? `<details><summary class="small">どうやって決まったか（${s.method === "stv" ? "STV" : "RCV"}の各回）</summary><ol class="rounds">${rounds}</ol></details>` : ""}

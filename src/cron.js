@@ -1,11 +1,22 @@
 // 毎朝のリマインド（wrangler.toml の [triggers] で 8:00 JST に動く）
-import { idList, nowJst, todayJst, repIds, headIds } from "./util.js";
+import { idList, nowJst, todayJst, repIds, headIds, adminIds } from "./util.js";
+import { nextMonth } from "./api/surveys.js";
 import { notify } from "./notify.js";
 import { addDays } from "./project-types.js";
 import { regularOccurrences } from "./schedule.js";
 
 export async function runDailyReminders(env) {
-  await Promise.all([remindNextMeeting(env), remindReviews(env), remindTodayMeetings(env), remindTeireiReports(env), remindSchedulePolls(env)]);
+  await Promise.all([remindNextMeeting(env), remindReviews(env), remindTodayMeetings(env), remindTeireiReports(env), remindSchedulePolls(env), remindTeireiSurvey(env)]);
+}
+
+// 毎月20日：来月の定例の曜日・時間決めアンケートがまだなければ、管理者に「作りましょう」と知らせる（月に1度）
+async function remindTeireiSurvey(env) {
+  const today = todayJst();
+  if (today.slice(8) !== "20") return;
+  const month = nextMonth(today.slice(0, 7));
+  const made = await env.DB.prepare("SELECT 1 FROM surveys WHERE kind = 'teirei' AND json_extract(meta, '$.month') = ?").bind(month).first();
+  if (made) return;
+  await notify(env, await adminIds(env), `【定例】${Number(month.slice(5))}月の定例の曜日・時間を決めるアンケートを作りましょう（ホーム →「アンケートを追加」→「定例の曜日・時間決め」）`, "#/surveys/new?kind=teirei");
 }
 
 // 受付中の日程調整アンケート → まだ答えていないPJのメンバーへ

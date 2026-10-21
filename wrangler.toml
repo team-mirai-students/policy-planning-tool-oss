@@ -59,36 +59,3 @@ NOTION_OTHER_PAGE = ""
 # シークレット（`npx wrangler secret put <NAME>` で設定。コードやログには出さない）:
 #   DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET / SESSION_SECRET
 #   DISCORD_BOT_TOKEN（フェーズ1b：アクションボードのBot）
-
-# ---------- テスト版（みんなで試す用。本番とは別のURL・別のDB） ----------
-# デプロイ：npx wrangler deploy --env test ／ DBの更新：npx wrangler d1 migrations apply policy-planning-test --remote --env test
-# シークレットは本番と別に設定する（--env test）。Discordの開発者ポータルに .../auth/callback のリダイレクトURLを追加しておく
-[env.test]
-name = "policy-planning-test"
-
-# デプロイの版（画面の自動更新に使う）。環境ごとに書かないと引き継がれない
-[env.test.version_metadata]
-binding = "CF_VERSION"
-
-[[env.test.d1_databases]]
-binding = "DB"
-database_name = "policy-planning-test"
-database_id = "<npx wrangler d1 create で出た database_id>"
-migrations_dir = "migrations"
-
-# テスト版では、毎朝のリマインドは送らない
-[env.test.triggers]
-crons = []
-
-[env.test.vars]
-# 画面上部に出す帯（本番と見分けるため）
-SITE_LABEL = "テスト版"
-APP_URL = "https://policy-planning-test.<アカウント>.workers.dev"
-DISCORD_GUILD_ID = ""
-DEPT_ROLE_ID = ""
-HEAD_IDS = ""
-REP_IDS = ""
-ADMIN_IDS = ""
-# テスト版からは渉外フォーラムにスレッドを作らない
-HEARING_FORUM_ID = ""
-HEARING_FORUM_TAG_ID = ""
